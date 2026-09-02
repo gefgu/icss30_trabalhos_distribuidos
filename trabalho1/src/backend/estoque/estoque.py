@@ -14,3 +14,9 @@
 # Ao receber um evento pedido.excluido, o microsserviço Estoque deverá devolver ao
 # estoque os produtos que haviam sido reservados para o pedido.
 
+import pika
+
+
+if __name__ == '__main__':
+    connection = pika.BlockingConnection(pika.ConnectionParameters(host='localhost'))
+    channel = connection.channel()

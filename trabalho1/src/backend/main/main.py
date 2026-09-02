@@ -20,3 +20,10 @@
 # Quando um produto não estiver disponível em estoque ou quando o pagamento de um
 # pedido for recusado, o microsserviço Principal deverá publicar um evento utilizando a
 # routing key pedido.excluido.
+
+import pika
+
+
+if __name__ == '__main__':
+    connection = pika.BlockingConnection(pika.ConnectionParameters(host='localhost'))
+    channel = connection.channel()

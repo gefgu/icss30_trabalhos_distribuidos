@@ -4,3 +4,10 @@
 # Após receber esse evento, deverá realizar as operações necessárias para emissão da nota
 # e preparação da entrega. Após o processamento, deverá publicar um novo evento
 # utilizando a routing key pedido.enviado, informando que o pedido foi enviado.
+
+import pika
+
+
+if __name__ == '__main__':
+    connection = pika.BlockingConnection(pika.ConnectionParameters(host='localhost'))
+    channel = connection.channel()

@@ -8,4 +8,9 @@
 # evento utilizando a routing key pagamento.aprovado.
 # Quando o pagamento for recusado, deverá publicar um evento utilizando a routing
 # key pagamento.recusado.
+import pika
 
+
+if __name__ == '__main__':
+    connection = pika.BlockingConnection(pika.ConnectionParameters(host='localhost'))
+    channel = connection.channel()

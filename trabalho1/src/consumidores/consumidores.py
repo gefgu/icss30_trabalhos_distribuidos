@@ -6,4 +6,10 @@
 # realizar chamadas para nenhum dos microsserviços. Eles devem se comunicar
 # exclusivamente com o RabbitMQ, consumindo eventos de promoções.
 
+import pika
+
+
+if __name__ == '__main__':
+    connection = pika.BlockingConnection(pika.ConnectionParameters(host='localhost'))
+    channel = connection.channel()
 

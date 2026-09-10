@@ -15,8 +15,33 @@
 # estoque os produtos que haviam sido reservados para o pedido.
 
 import pika
+from helpers.helper import init_ecommerce_exchange, EXCHANGE_ECOMMERCE_NAME
 
 
 if __name__ == '__main__':
     connection = pika.BlockingConnection(pika.ConnectionParameters(host='localhost'))
     channel = connection.channel()
+
+    init_ecommerce_exchange(channel)
+
+    channel.queue_declare(
+        queue='estoque', 
+        durable=True)
+    
+    channel.queue_bind(
+        exchange=EXCHANGE_ECOMMERCE_NAME, 
+        queue='estoque', 
+        routing_key='pedido.criado')
+    
+    channel.queue_bind(
+        exchange=EXCHANGE_ECOMMERCE_NAME, 
+        queue='estoque', 
+        routing_key='pedido.excluido')
+
+    channel.basic_consume(
+        queue="meu_microservico",
+        on_message_callback=receber_mensagem,
+        auto_ack=False
+    )
+
+    channel.start_consuming()

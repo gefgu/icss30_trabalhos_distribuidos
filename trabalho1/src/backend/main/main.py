@@ -21,13 +21,15 @@
 # pedido for recusado, o microsserviço Principal deverá publicar um evento utilizando a
 # routing key pedido.excluido.
 
+import threading
+
 import pika
 import os
 import sys
 import subprocess
 from time import sleep
 
-from helpers.helper import EXCHANGE_ECOMMERCE_NAME
+from helpers.helper import init_ecommerce_exchange, EXCHANGE_ECOMMERCE_NAME
 
 produtos = [
     {"id": 1, "nome": "Produto A", "categoria": "A", "estoque": 5},
@@ -52,98 +54,106 @@ class MenuInterativo:
             pika.ConnectionParameters(host="localhost")
         )
         self.channel = connection.channel()
+        init_ecommerce_exchange(self.channel)
+
+    def iniciar_consumo(self):
+        connection = pika.BlockingConnection(
+            pika.ConnectionParameters(host="localhost")
+        )
+        self.consumer_channel = connection.channel()
+        init_ecommerce_exchange(self.consumer_channel)
 
         queue_pagamento_aprovado = "pagamento_aprovado"
-        self.channel.queue_declare(
+        self.consumer_channel.queue_declare(
             queue=queue_pagamento_aprovado,
             durable=True,
             exclusive=False,
             auto_delete=False,
         )
-        self.channel.queue_bind(
+        self.consumer_channel.queue_bind(
             exchange=EXCHANGE_ECOMMERCE_NAME,
             queue=queue_pagamento_aprovado,
             routing_key="pagamento.aprovado",
         )
-        self.channel.basic_consume(
+        self.consumer_channel.basic_consume(
             queue=queue_pagamento_aprovado,
             on_message_callback=self.processa_pagamento_aprovado,
             auto_ack=True,
         )
 
         queue_pagamento_recusado = "pagamento_recusado"
-        self.channel.queue_declare(
+        self.consumer_channel.queue_declare(
             queue=queue_pagamento_recusado,
             durable=True,
             exclusive=False,
             auto_delete=False,
         )
-        self.channel.queue_bind(
+        self.consumer_channel.queue_bind(
             exchange=EXCHANGE_ECOMMERCE_NAME,
             queue=queue_pagamento_recusado,
             routing_key="pagamento.recusado",
         )
-        self.channel.basic_consume(
+        self.consumer_channel.basic_consume(
             queue=queue_pagamento_recusado,
             on_message_callback=self.processa_pagamento_recusado,
             auto_ack=True,
         )
 
         queue_pedidos_enviados = "pedidos_enviados"
-        self.channel.queue_declare(
+        self.consumer_channel.queue_declare(
             queue=queue_pedidos_enviados,
             durable=True,
             exclusive=False,
             auto_delete=False,
         )
-        self.channel.queue_bind(
+        self.consumer_channel.queue_bind(
             exchange=EXCHANGE_ECOMMERCE_NAME,
             queue=queue_pedidos_enviados,
             routing_key="pedido.criado",
         )
-        self.channel.basic_consume(
+        self.consumer_channel.basic_consume(
             queue=queue_pedidos_enviados,
             on_message_callback=self.processa_pedido_enviado,
             auto_ack=True,
         )
 
         queue_pedidos_estoque_ok = "pedidos_estoque_ok"
-        self.channel.queue_declare(
+        self.consumer_channel.queue_declare(
             queue=queue_pedidos_estoque_ok,
             durable=True,
             exclusive=False,
             auto_delete=False,
         )
-        self.channel.queue_bind(
+        self.consumer_channel.queue_bind(
             exchange=EXCHANGE_ECOMMERCE_NAME,
             queue=queue_pedidos_estoque_ok,
             routing_key="pedido.estoque_ok",
         )
-        self.channel.basic_consume(
+        self.consumer_channel.basic_consume(
             queue=queue_pedidos_estoque_ok,
             on_message_callback=self.processa_pedido_estoque_ok,
             auto_ack=True,
         )
 
         queue_estoque_indisponivel = "estoque_indisponivel"
-        self.channel.queue_declare(
+        self.consumer_channel.queue_declare(
             queue=queue_estoque_indisponivel,
             durable=True,
             exclusive=False,
             auto_delete=False,
         )
-        self.channel.queue_bind(
+        self.consumer_channel.queue_bind(
             exchange=EXCHANGE_ECOMMERCE_NAME,
             queue=queue_estoque_indisponivel,
             routing_key="estoque.indisponivel",
         )
-        self.channel.basic_consume(
+        self.consumer_channel.basic_consume(
             queue=queue_estoque_indisponivel,
             on_message_callback=self.processa_estoque_indisponivel,
             auto_ack=True,
         )
 
-        self.channel.start_consuming()
+        self.consumer_channel.start_consuming()
 
     def limpar_tela(self):
         subprocess.run("cls" if os.name == "nt" else "clear", shell=True)
@@ -291,7 +301,7 @@ class MenuInterativo:
         if pedido:
             pedido["pagamento"] = "recusado"
             # Publica o evento de exclusão do pedido no RabbitMQ
-            self.channel.basic_publish(
+            self.consumer_channel.basic_publish(
                 exchange=EXCHANGE_ECOMMERCE_NAME,
                 routing_key="pedido.excluido",
                 body=str(id_pedido),
@@ -323,7 +333,7 @@ class MenuInterativo:
         if pedido:
             pedido["estoque"] = "indisponível"
             # Publica o evento de exclusão do pedido no RabbitMQ
-            self.channel.basic_publish(
+            self.consumer_channel.basic_publish(
                 exchange=EXCHANGE_ECOMMERCE_NAME,
                 routing_key="pedido.excluido",
                 body=str(id_pedido),
@@ -332,6 +342,11 @@ class MenuInterativo:
 
 def main():
     menu = MenuInterativo()
+
+    consumer_thread = threading.Thread(target=menu.iniciar_consumo, daemon=True)
+
+    consumer_thread.start()
+
     menu.exibir_menu()
 
 

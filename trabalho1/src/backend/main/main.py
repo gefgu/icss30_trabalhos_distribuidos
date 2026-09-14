@@ -36,91 +36,114 @@ produtos = [
     {"id": 4, "nome": "Produto A1", "categoria": "A", "estoque": 10},
 ]
 
+pedidos = [
+    {
+        "id": 1,
+        "produtos": [{"id": 1, "quantidade": 2}, {"id": 2, "quantidade": 1}],
+        "estoque": None,
+        "pagamento": None,
+    },
+]
+
 
 class MenuInterativo:
     def __init__(self):
-        connection = pika.BlockingConnection(pika.ConnectionParameters(host="localhost"))
+        connection = pika.BlockingConnection(
+            pika.ConnectionParameters(host="localhost")
+        )
         self.channel = connection.channel()
 
         queue_pagamento_aprovado = "pagamento_aprovado"
         self.channel.queue_declare(
-            queue=queue_pagamento_aprovado, durable=True, exclusive=False, auto_delete=False
+            queue=queue_pagamento_aprovado,
+            durable=True,
+            exclusive=False,
+            auto_delete=False,
         )
         self.channel.queue_bind(
             exchange=EXCHANGE_ECOMMERCE_NAME,
             queue=queue_pagamento_aprovado,
-            routing_key='pagamento.aprovado'
+            routing_key="pagamento.aprovado",
         )
         self.channel.basic_consume(
             queue=queue_pagamento_aprovado,
             on_message_callback=self.processa_pagemento_aprovado,
-            auto_ack=True
+            auto_ack=True,
         )
-
 
         queue_pagamento_recusado = "pagamento_recusado"
         self.channel.queue_declare(
-            queue=queue_pagamento_recusado, durable=True, exclusive=False, auto_delete=False)
+            queue=queue_pagamento_recusado,
+            durable=True,
+            exclusive=False,
+            auto_delete=False,
+        )
         self.channel.queue_bind(
             exchange=EXCHANGE_ECOMMERCE_NAME,
             queue=queue_pagamento_recusado,
-            routing_key='pagamento.recusado'
+            routing_key="pagamento.recusado",
         )
         self.channel.basic_consume(
             queue=queue_pagamento_recusado,
             on_message_callback=self.processa_pagemento_recusado,
-            auto_ack=True
+            auto_ack=True,
         )
-
 
         queue_pedidos_enviados = "pedidos_enviados"
         self.channel.queue_declare(
-            queue=queue_pedidos_enviados, durable=True, exclusive=False, auto_delete=False)
+            queue=queue_pedidos_enviados,
+            durable=True,
+            exclusive=False,
+            auto_delete=False,
+        )
         self.channel.queue_bind(
             exchange=EXCHANGE_ECOMMERCE_NAME,
             queue=queue_pedidos_enviados,
-            routing_key='pedido.criado'
+            routing_key="pedido.criado",
         )
         self.channel.basic_consume(
             queue=queue_pedidos_enviados,
             on_message_callback=self.processa_pedido_enviado,
-            auto_ack=True
+            auto_ack=True,
         )
-
 
         queue_pedidos_estoque_ok = "pedidos_estoque_ok"
         self.channel.queue_declare(
-            queue=queue_pedidos_estoque_ok, durable=True, exclusive=False, auto_delete=False)
+            queue=queue_pedidos_estoque_ok,
+            durable=True,
+            exclusive=False,
+            auto_delete=False,
+        )
         self.channel.queue_bind(
             exchange=EXCHANGE_ECOMMERCE_NAME,
             queue=queue_pedidos_estoque_ok,
-            routing_key='pedido.estoque_ok'
+            routing_key="pedido.estoque_ok",
         )
         self.channel.basic_consume(
             queue=queue_pedidos_estoque_ok,
             on_message_callback=self.processa_pedido_estoque_ok,
-            auto_ack=True
+            auto_ack=True,
         )
 
         queue_estoque_indisponivel = "estoque_indisponivel"
         self.channel.queue_declare(
-            queue=queue_estoque_indisponivel, durable=True, exclusive=False, auto_delete=False)
+            queue=queue_estoque_indisponivel,
+            durable=True,
+            exclusive=False,
+            auto_delete=False,
+        )
         self.channel.queue_bind(
             exchange=EXCHANGE_ECOMMERCE_NAME,
             queue=queue_estoque_indisponivel,
-            routing_key='estoque.indisponivel'
+            routing_key="estoque.indisponivel",
         )
         self.channel.basic_consume(
             queue=queue_estoque_indisponivel,
             on_message_callback=self.processa_estoque_indisponivel,
-            auto_ack=True
+            auto_ack=True,
         )
 
-
         self.channel.start_consuming()
-
-
-        
 
     def limpar_tela(self):
         subprocess.run("cls" if os.name == "nt" else "clear", shell=True)
@@ -136,21 +159,20 @@ class MenuInterativo:
             print("5. Sair")
 
             opcao = input("\nEscolha uma opção: ")
-            
-            if opcao == '1':
+
+            if opcao == "1":
                 self.visualizar_produtos()
-            elif opcao == '2':
+            elif opcao == "2":
                 self.realizar_pedidos()
-            elif opcao == '3':
+            elif opcao == "3":
                 self.excluir_pedidos()
-            elif opcao == '4':
+            elif opcao == "4":
                 self.consultar_pedidos()
-            elif opcao == '5':
+            elif opcao == "5":
                 print("\nSaindo do sistema. Até logo!\n")
                 break
             else:
                 input("\nOpção inválida! Pressione [ENTER] para tentar novamente.")
-
 
     def visualizar_produtos(self):
         print("\n=== Lista de Produtos ===")
@@ -161,14 +183,8 @@ class MenuInterativo:
 
         input("\nPressione [ENTER] para voltar ao menu principal.")
 
-
-        
-        
-
     def realizar_pedidos(self):
         print("\n=== Realizar Pedido ===")
-        print("TODO")
-        sleep(2)  # Simula o tempo de carregamento
 
     def excluir_pedidos(self):
         print("\n=== Excluir Pedido ===")
@@ -177,8 +193,22 @@ class MenuInterativo:
 
     def consultar_pedidos(self):
         print("\n=== Consultar Pedidos ===")
-        print("TODO")
-        sleep(2)  # Simula o tempo de carregamento
+        for pedido in pedidos:
+            print(f"ID do Pedido: {pedido['id']}")
+            print("Produtos:")
+            for produto in pedido["produtos"]:
+                produto_info = next(
+                    (p for p in produtos if p["id"] == produto["id"]), None
+                )
+                if produto_info:
+                    print(
+                        f"- {produto_info['nome']} (Quantidade: {produto['quantidade']})"
+                    )
+            print(f"Status do Estoque: {pedido['estoque']}")
+            print(f"Status do Pagamento: {pedido['pagamento']}")
+            print("------------------------")
+
+        input("\nPressione [ENTER] para voltar ao menu principal.")
 
     def processa_pagemento_aprovado(self, ch, method, properties, body):
         print(f"Pagamento aprovado: {body.decode()}")
@@ -196,10 +226,10 @@ class MenuInterativo:
         print(f"Estoque indisponível: {body.decode()}")
 
 
-
 def main():
     menu = MenuInterativo()
     menu.exibir_menu()
+
 
 if __name__ == "__main__":
     try:

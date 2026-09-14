@@ -27,10 +27,100 @@ import sys
 import subprocess
 from time import sleep
 
+from helpers.helper import EXCHANGE_ECOMMERCE_NAME
+
+produtos = [
+    {"id": 1, "nome": "Produto A", "categoria": "A", "estoque": 5},
+    {"id": 2, "nome": "Produto B", "categoria": "B", "estoque": 3},
+    {"id": 3, "nome": "Produto C", "categoria": "C", "estoque": 0},
+    {"id": 4, "nome": "Produto A1", "categoria": "A", "estoque": 10},
+]
+
+
 class MenuInterativo:
     def __init__(self):
         connection = pika.BlockingConnection(pika.ConnectionParameters(host="localhost"))
         self.channel = connection.channel()
+
+        queue_pagamento_aprovado = "pagamento_aprovado"
+        self.channel.queue_declare(
+            queue=queue_pagamento_aprovado, durable=True, exclusive=False, auto_delete=False
+        )
+        self.channel.queue_bind(
+            exchange=EXCHANGE_ECOMMERCE_NAME,
+            queue=queue_pagamento_aprovado,
+            routing_key='pagamento.aprovado'
+        )
+        self.channel.basic_consume(
+            queue=queue_pagamento_aprovado,
+            on_message_callback=self.processa_pagemento_aprovado,
+            auto_ack=True
+        )
+
+
+        queue_pagamento_recusado = "pagamento_recusado"
+        self.channel.queue_declare(
+            queue=queue_pagamento_recusado, durable=True, exclusive=False, auto_delete=False)
+        self.channel.queue_bind(
+            exchange=EXCHANGE_ECOMMERCE_NAME,
+            queue=queue_pagamento_recusado,
+            routing_key='pagamento.recusado'
+        )
+        self.channel.basic_consume(
+            queue=queue_pagamento_recusado,
+            on_message_callback=self.processa_pagemento_recusado,
+            auto_ack=True
+        )
+
+
+        queue_pedidos_enviados = "pedidos_enviados"
+        self.channel.queue_declare(
+            queue=queue_pedidos_enviados, durable=True, exclusive=False, auto_delete=False)
+        self.channel.queue_bind(
+            exchange=EXCHANGE_ECOMMERCE_NAME,
+            queue=queue_pedidos_enviados,
+            routing_key='pedido.criado'
+        )
+        self.channel.basic_consume(
+            queue=queue_pedidos_enviados,
+            on_message_callback=self.processa_pedido_enviado,
+            auto_ack=True
+        )
+
+
+        queue_pedidos_estoque_ok = "pedidos_estoque_ok"
+        self.channel.queue_declare(
+            queue=queue_pedidos_estoque_ok, durable=True, exclusive=False, auto_delete=False)
+        self.channel.queue_bind(
+            exchange=EXCHANGE_ECOMMERCE_NAME,
+            queue=queue_pedidos_estoque_ok,
+            routing_key='pedido.estoque_ok'
+        )
+        self.channel.basic_consume(
+            queue=queue_pedidos_estoque_ok,
+            on_message_callback=self.processa_pedido_estoque_ok,
+            auto_ack=True
+        )
+
+        queue_estoque_indisponivel = "estoque_indisponivel"
+        self.channel.queue_declare(
+            queue=queue_estoque_indisponivel, durable=True, exclusive=False, auto_delete=False)
+        self.channel.queue_bind(
+            exchange=EXCHANGE_ECOMMERCE_NAME,
+            queue=queue_estoque_indisponivel,
+            routing_key='estoque.indisponivel'
+        )
+        self.channel.basic_consume(
+            queue=queue_estoque_indisponivel,
+            on_message_callback=self.processa_estoque_indisponivel,
+            auto_ack=True
+        )
+
+
+        self.channel.start_consuming()
+
+
+        
 
     def limpar_tela(self):
         subprocess.run("cls" if os.name == "nt" else "clear", shell=True)
@@ -61,10 +151,19 @@ class MenuInterativo:
             else:
                 input("\nOpção inválida! Pressione [ENTER] para tentar novamente.")
 
+
     def visualizar_produtos(self):
         print("\n=== Lista de Produtos ===")
-        print("TODO")
-        sleep(2)  # Simula o tempo de carregamento
+        for produto in produtos:
+            print(
+                f"ID: {produto['id']}, Nome: {produto['nome']}, Categoria: {produto['categoria']}, Estoque: {produto['estoque']}"
+            )
+
+        input("\nPressione [ENTER] para voltar ao menu principal.")
+
+
+        
+        
 
     def realizar_pedidos(self):
         print("\n=== Realizar Pedido ===")
@@ -80,6 +179,21 @@ class MenuInterativo:
         print("\n=== Consultar Pedidos ===")
         print("TODO")
         sleep(2)  # Simula o tempo de carregamento
+
+    def processa_pagemento_aprovado(self, ch, method, properties, body):
+        print(f"Pagamento aprovado: {body.decode()}")
+
+    def processa_pagemento_recusado(self, ch, method, properties, body):
+        print(f"Pagamento recusado: {body.decode()}")
+
+    def processa_pedido_enviado(self, ch, method, properties, body):
+        print(f"Pedido enviado: {body.decode()}")
+
+    def processa_pedido_estoque_ok(self, ch, method, properties, body):
+        print(f"Pedido estoque ok: {body.decode()}")
+
+    def processa_estoque_indisponivel(self, ch, method, properties, body):
+        print(f"Estoque indisponível: {body.decode()}")
 
 
 

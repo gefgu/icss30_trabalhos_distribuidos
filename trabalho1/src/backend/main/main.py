@@ -67,7 +67,7 @@ class MenuInterativo:
         )
         self.channel.basic_consume(
             queue=queue_pagamento_aprovado,
-            on_message_callback=self.processa_pagemento_aprovado,
+            on_message_callback=self.processa_pagamento_aprovado,
             auto_ack=True,
         )
 
@@ -85,7 +85,7 @@ class MenuInterativo:
         )
         self.channel.basic_consume(
             queue=queue_pagamento_recusado,
-            on_message_callback=self.processa_pagemento_recusado,
+            on_message_callback=self.processa_pagamento_recusado,
             auto_ack=True,
         )
 
@@ -185,11 +185,74 @@ class MenuInterativo:
 
     def realizar_pedidos(self):
         print("\n=== Realizar Pedido ===")
+        print(
+            "\nDigite os IDs dos produtos que deseja solicitar (separados por vírgula):"
+        )
+        ids_produtos = input().split(",")
+        produtos_selecionados = []
+        for id_produto in ids_produtos:
+            produto = next(
+                (p for p in produtos if str(p["id"]) == id_produto.strip()), None
+            )
+            if produto:
+                quantidade = int(
+                    input(f"Digite a quantidade para o produto {produto['nome']}: ")
+                )
+                produtos_selecionados.append(
+                    {"id": produto["id"], "quantidade": quantidade}
+                )
+            else:
+                print(f"Produto com ID {id_produto.strip()} não encontrado.")
+
+        if produtos_selecionados:
+            print("\nProdutos selecionados:")
+            for produto in produtos_selecionados:
+                produto_info = next(
+                    (p for p in produtos if p["id"] == produto["id"]), None
+                )
+                if produto_info:
+                    print(
+                        f"- {produto_info['nome']} (Quantidade: {produto['quantidade']})"
+                    )
+
+        # Cria um novo pedido com ID incremental
+        novo_id_pedido = max([p["id"] for p in pedidos], default=0) + 1
+        novo_pedido = {
+            "id": novo_id_pedido,
+            "produtos": produtos_selecionados,
+            "estoque": None,
+            "pagamento": None,
+        }
+
+        self.channel.basic_publish(
+            exchange=EXCHANGE_ECOMMERCE_NAME,
+            routing_key="pedido.criado",
+            body=str(novo_pedido),
+        )
+
+        pedidos.append(novo_pedido)
 
     def excluir_pedidos(self):
         print("\n=== Excluir Pedido ===")
-        print("TODO")
-        sleep(2)  # Simula o tempo de carregamento
+        print("\nDigite o ID do pedido que deseja excluir:")
+        id_pedido = input()
+
+        # Encontra o pedido com o ID informado
+        pedido = next((p for p in pedidos if p["id"] == id_pedido), None)
+        if pedido:
+            pedidos.remove(pedido)
+            # Publica o evento de exclusão do pedido no RabbitMQ
+            self.channel.basic_publish(
+                exchange=EXCHANGE_ECOMMERCE_NAME,
+                routing_key="pedido.excluido",
+                body=str(id_pedido),
+            )
+
+            print(f"Pedido {id_pedido} excluído com sucesso.")
+        else:
+            print(f"Pedido {id_pedido} não encontrado.")
+
+        input("\nPressione [ENTER] para voltar ao menu principal.")
 
     def consultar_pedidos(self):
         print("\n=== Consultar Pedidos ===")
@@ -210,20 +273,61 @@ class MenuInterativo:
 
         input("\nPressione [ENTER] para voltar ao menu principal.")
 
-    def processa_pagemento_aprovado(self, ch, method, properties, body):
-        print(f"Pagamento aprovado: {body.decode()}")
+    def processa_pagamento_aprovado(self, ch, method, properties, body):
+        print(f"\nPagamento aprovado: {body.decode()}")
 
-    def processa_pagemento_recusado(self, ch, method, properties, body):
-        print(f"Pagamento recusado: {body.decode()}")
+        # Atualiza o status do pagamento do pedido
+        id_pedido = body.decode()
+        pedido = next((p for p in pedidos if p["id"] == id_pedido), None)
+        if pedido:
+            pedido["pagamento"] = "aprovado"
+
+    def processa_pagamento_recusado(self, ch, method, properties, body):
+        print(f"\nPagamento recusado: {body.decode()}")
+
+        # Atualiza o status do pagamento do pedido
+        id_pedido = body.decode()
+        pedido = next((p for p in pedidos if p["id"] == id_pedido), None)
+        if pedido:
+            pedido["pagamento"] = "recusado"
+            # Publica o evento de exclusão do pedido no RabbitMQ
+            self.channel.basic_publish(
+                exchange=EXCHANGE_ECOMMERCE_NAME,
+                routing_key="pedido.excluido",
+                body=str(id_pedido),
+            )
 
     def processa_pedido_enviado(self, ch, method, properties, body):
-        print(f"Pedido enviado: {body.decode()}")
+        print(f"\nPedido enviado: {body.decode()}")
+
+        # Atualiza o status do pedido
+        id_pedido = body.decode()
+        pedido = next((p for p in pedidos if p["id"] == id_pedido), None)
+        if pedido:
+            pedido["status"] = "enviado"
 
     def processa_pedido_estoque_ok(self, ch, method, properties, body):
-        print(f"Pedido estoque ok: {body.decode()}")
+        print(f"\nPedido estoque ok: {body.decode()}")
+
+        # Atualiza o status do estoque do pedido
+        id_pedido = body.decode()
+        pedido = next((p for p in pedidos if p["id"] == id_pedido), None)
+        if pedido:
+            pedido["estoque"] = "ok"
 
     def processa_estoque_indisponivel(self, ch, method, properties, body):
         print(f"Estoque indisponível: {body.decode()}")
+
+        id_pedido = body.decode()
+        pedido = next((p for p in pedidos if p["id"] == id_pedido), None)
+        if pedido:
+            pedido["estoque"] = "indisponível"
+            # Publica o evento de exclusão do pedido no RabbitMQ
+            self.channel.basic_publish(
+                exchange=EXCHANGE_ECOMMERCE_NAME,
+                routing_key="pedido.excluido",
+                body=str(id_pedido),
+            )
 
 
 def main():

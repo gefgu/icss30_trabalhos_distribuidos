@@ -23,18 +23,18 @@
 
 import json
 import threading
-from Crypto.PublicKey import RSA
 import pika
 import os
 import sys
 import subprocess
 from time import sleep
-from Crypto.Signature import pkcs1_15
-from Crypto.Hash import SHA256
-from Crypto.PublicKey import RSA
 from pathlib import Path
 
-from helpers.helper import init_ecommerce_exchange, EXCHANGE_ECOMMERCE_NAME
+from helpers.helper import (
+    EXCHANGE_ECOMMERCE_NAME,
+    init_ecommerce_exchange,
+    verificar_assinatura,
+)
 
 FILE_FOLDER_PATH = Path(__file__).resolve().parents[0]
 SRC_FOLDER = Path(__file__).resolve().parents[1]
@@ -333,17 +333,11 @@ class MenuInterativo:
         body_dict = json.loads(body_data)
         id_pedido = body_dict.get("id")
         signature = body_dict.get("signature")
-        signature_bytes = bytes.fromhex(signature)
 
         # Verifica a assinatura digital 
-        with open(SRC_FOLDER / "estoque/public.pem", "rb") as f:
-            public_key = RSA.import_key(f.read())
-
-        h = SHA256.new( str(id_pedido).encode("utf-8") )
-        try:
-            pkcs1_15.new(public_key).verify(h, signature_bytes)
+        if verificar_assinatura(id_pedido, signature, SRC_FOLDER / "estoque/public.pem"):
             print("The signature is valid.")
-        except (ValueError, TypeError):
+        else:
             print("The signature is not valid.")
             return
         

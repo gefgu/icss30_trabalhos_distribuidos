@@ -1,6 +1,31 @@
 EXCHANGE_ECOMMERCE_NAME = 'ecommerce'
 EXCHANGE_PROMOCOES_NAME = 'promocoes'
 
+from pathlib import Path
+
+from Crypto.Hash import SHA256
+from Crypto.PublicKey import RSA
+from Crypto.Signature import pkcs1_15
+
+
+def assinar_mensagem(mensagem, private_key_path):
+    """Assina uma mensagem e retorna a assinatura em hexadecimal."""
+    private_key = RSA.import_key(Path(private_key_path).read_bytes())
+    digest = SHA256.new(str(mensagem).encode("utf-8"))
+    return pkcs1_15.new(private_key).sign(digest).hex()
+
+
+def verificar_assinatura(mensagem, assinatura_hex, public_key_path):
+    """Verifica uma assinatura hexadecimal e retorna True se ela for válida."""
+    try:
+        public_key = RSA.import_key(Path(public_key_path).read_bytes())
+        assinatura = bytes.fromhex(assinatura_hex)
+        digest = SHA256.new(str(mensagem).encode("utf-8"))
+        pkcs1_15.new(public_key).verify(digest, assinatura)
+        return True
+    except (ValueError, TypeError):
+        return False
+
 
 def init_promocoes_exchange(channel):
     """

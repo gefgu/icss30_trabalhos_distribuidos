@@ -17,14 +17,14 @@
 import ast
 import json
 from Crypto.PublicKey import RSA
-from Crypto.Signature import pkcs1_15
-from Crypto.Hash import SHA256
-from Crypto.PublicKey import RSA
 import pika
 from pathlib import Path
 
-  
-from helpers.helper import EXCHANGE_ECOMMERCE_NAME, init_ecommerce_exchange
+from helpers.helper import (
+    EXCHANGE_ECOMMERCE_NAME,
+    assinar_mensagem,
+    init_ecommerce_exchange,
+)
 
 
 produtos = [
@@ -149,9 +149,7 @@ def receber_mensagem(ch, method, properties, body):
     if routing_key == "pedido.criado":
         resultado = processar_pedido(mensagem)
         pedido_id = resultado["id"]
-        signature = pkcs1_15.new(RSA.import_key(open(PRIVATE_KEY_FILE).read())).sign(
-            SHA256.new(str(pedido_id).encode())
-        )
+        signature = assinar_mensagem(pedido_id, PRIVATE_KEY_FILE)
 
         if resultado["status"] == "estoque_ok":
             ch.basic_publish(
@@ -160,7 +158,7 @@ def receber_mensagem(ch, method, properties, body):
                 body=json.dumps(
                     {
                         "id": pedido_id,
-                        "signature": signature.hex(),
+                        "signature": signature,
                     }
                 ),
             )
@@ -172,7 +170,7 @@ def receber_mensagem(ch, method, properties, body):
                 body=json.dumps(
                     {
                         "id": pedido_id,
-                        "signature": signature.hex(),
+                        "signature": signature,
                     }
                 ),
             )

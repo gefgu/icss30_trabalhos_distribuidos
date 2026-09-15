@@ -3,9 +3,62 @@
 # RabbitMQ, utilizando routing keys que indiquem a categoria do produto,
 # como promocao.categoria.A, promocao.categoria.B, promocao.categoria.C
 
+import json
+import random
+from time import sleep
+
 import pika
+
+from helpers.helper import EXCHANGE_PROMOCOES_NAME, init_promocoes_exchange
+
+produtos = [
+    {"id": 1, "nome": "Produto A", "categoria": "A"},
+    {"id": 2, "nome": "Produto B", "categoria": "B"},
+    {"id": 3, "nome": "Produto C", "categoria": "C"},
+    {"id": 4, "nome": "Produto A1", "categoria": "A"},
+]
+
+
+def gerar_promocao():
+    """
+    Gera uma promoção aleatória para um dos produtos disponíveis.
+    """
+    produto = random.choice(produtos)
+    desconto = random.choice([10, 15, 20, 25, 30, 50])
+
+    promocao = {
+        "produto_id": produto["id"],
+        "nome": produto["nome"],
+        "categoria": produto["categoria"],
+        "desconto": desconto,
+    }
+    routing_key = f"promocao.categoria.{produto['categoria']}"
+    return promocao, routing_key
 
 
 if __name__ == '__main__':
     connection = pika.BlockingConnection(pika.ConnectionParameters(host='localhost'))
     channel = connection.channel()
+
+    init_promocoes_exchange(channel)
+
+    print("[PROMOCOES] Gerando e publicando promoções...")
+    try:
+        while True:
+            promocao, routing_key = gerar_promocao()
+
+            channel.basic_publish(
+                exchange=EXCHANGE_PROMOCOES_NAME,
+                routing_key=routing_key,
+                body=json.dumps(promocao),
+            )
+
+            print(
+                f"[PROMOCOES] {routing_key} -> {promocao['nome']} "
+                f"com {promocao['desconto']}% de desconto"
+            )
+
+            sleep(5)
+    except KeyboardInterrupt:
+        print("\n[PROMOCOES] Encerrando geração de promoções.")
+        connection.close()

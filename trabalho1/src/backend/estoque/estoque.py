@@ -14,8 +14,132 @@
 # Ao receber um evento pedido.excluido, o microsserviço Estoque deverá devolver ao
 # estoque os produtos que haviam sido reservados para o pedido.
 
+import ast
+import json
+
 import pika
-from helpers.helper import init_ecommerce_exchange, EXCHANGE_ECOMMERCE_NAME
+
+from helpers.helper import EXCHANGE_ECOMMERCE_NAME, init_ecommerce_exchange
+
+produtos = [
+    {"id": 1, "nome": "Produto A", "categoria": "A", "estoque": 5},
+    {"id": 2, "nome": "Produto B", "categoria": "B", "estoque": 3},
+    {"id": 3, "nome": "Produto C", "categoria": "C", "estoque": 0},
+    {"id": 4, "nome": "Produto A1", "categoria": "A", "estoque": 10},
+]
+
+reservas = {}
+
+
+def _parse_mensagem(body):
+    if isinstance(body, (bytes, bytearray)):
+        conteudo = body.decode("utf-8")
+    else:
+        conteudo = str(body)
+
+    conteudo = conteudo.strip()
+    if not conteudo or conteudo in {"None", "null"}:
+        return {}
+
+    try:
+        return json.loads(conteudo)
+    except json.JSONDecodeError:
+        try:
+            return ast.literal_eval(conteudo)
+        except (ValueError, SyntaxError):
+            return {"id": conteudo}
+
+
+def _obter_id_pedido(dados):
+    if isinstance(dados, dict):
+        pedido_id = dados.get("id")
+    else:
+        pedido_id = dados
+
+    if isinstance(pedido_id, str):
+        pedido_id = pedido_id.strip()
+        if pedido_id.isdigit():
+            return int(pedido_id)
+        try:
+            return int(ast.literal_eval(pedido_id))
+        except (ValueError, SyntaxError):
+            return pedido_id
+
+    return pedido_id
+
+
+def processar_pedido(pedido):
+    dados = pedido if isinstance(pedido, dict) else _parse_mensagem(pedido)
+    pedido_id = _obter_id_pedido(dados)
+    itens = dados.get("produtos", []) if isinstance(dados, dict) else []
+
+    if not itens:
+        return {"id": pedido_id, "status": "indisponivel", "mensagem": "Pedido sem produtos."}
+
+    itens_para_reservar = []
+    for item in itens:
+        produto_id = item.get("id") if isinstance(item, dict) else item
+        quantidade = item.get("quantidade", 1) if isinstance(item, dict) else 1
+        produto = next((p for p in produtos if p["id"] == produto_id), None)
+
+        if produto is None:
+            return {"id": pedido_id, "status": "indisponivel", "mensagem": f"Produto {produto_id} não encontrado."}
+
+        if produto["estoque"] < quantidade:
+            return {"id": pedido_id, "status": "indisponivel", "mensagem": f"Produto {produto_id} sem estoque suficiente."}
+
+        itens_para_reservar.append({"id": produto_id, "quantidade": quantidade})
+
+    for item in itens_para_reservar:
+        produto = next((p for p in produtos if p["id"] == item["id"]), None)
+        if produto is not None:
+            produto["estoque"] -= item["quantidade"]
+
+    reservas[pedido_id] = itens_para_reservar
+    return {"id": pedido_id, "status": "estoque_ok", "mensagem": "Produto(s) reservados com sucesso."}
+
+
+def processar_exclusao(pedido_id):
+    id_pedido = _obter_id_pedido(pedido_id)
+    itens_reservados = reservas.pop(id_pedido, [])
+
+    for item in itens_reservados:
+        produto = next((p for p in produtos if p["id"] == item["id"]), None)
+        if produto is not None:
+            produto["estoque"] += item["quantidade"]
+
+    return {"id": id_pedido, "status": "pedido_cancelado", "mensagem": "Produtos devolvidos ao estoque."}
+
+
+def receber_mensagem(ch, method, properties, body):
+    mensagem = _parse_mensagem(body)
+    routing_key = method.routing_key
+
+    if routing_key == "pedido.criado":
+        resultado = processar_pedido(mensagem)
+        pedido_id = resultado["id"]
+
+        if resultado["status"] == "estoque_ok":
+            ch.basic_publish(
+                exchange=EXCHANGE_ECOMMERCE_NAME,
+                routing_key="pedido.estoque_ok",
+                body=str(pedido_id),
+            )
+            print(f"[ESTOQUE] Pedido {pedido_id} passou pela validação do estoque.")
+        else:
+            ch.basic_publish(
+                exchange=EXCHANGE_ECOMMERCE_NAME,
+                routing_key="estoque.indisponivel",
+                body=str(pedido_id),
+            )
+            print(f"[ESTOQUE] Pedido {pedido_id} indisponível: {resultado['mensagem']}")
+
+    elif routing_key == "pedido.excluido":
+        pedido_id = _obter_id_pedido(mensagem)
+        resultado = processar_exclusao(pedido_id)
+        print(f"[ESTOQUE] Pedido {resultado['id']} cancelado e devolvido ao estoque.")
+
+    ch.basic_ack(delivery_tag=method.delivery_tag)
 
 
 if __name__ == '__main__':
@@ -24,24 +148,26 @@ if __name__ == '__main__':
 
     init_ecommerce_exchange(channel)
 
-    channel.queue_declare(
-        queue='estoque', 
-        durable=True)
-    
-    channel.queue_bind(
-        exchange=EXCHANGE_ECOMMERCE_NAME, 
-        queue='estoque', 
-        routing_key='pedido.criado')
-    
-    channel.queue_bind(
-        exchange=EXCHANGE_ECOMMERCE_NAME, 
-        queue='estoque', 
-        routing_key='pedido.excluido')
+    queue_name = 'estoque'
+    channel.queue_declare(queue=queue_name, durable=True)
 
-    channel.basic_consume(
-        queue="meu_microservico",
-        on_message_callback=receber_mensagem,
-        auto_ack=False
+    channel.queue_bind(
+        exchange=EXCHANGE_ECOMMERCE_NAME,
+        queue=queue_name,
+        routing_key='pedido.criado',
     )
 
+    channel.queue_bind(
+        exchange=EXCHANGE_ECOMMERCE_NAME,
+        queue=queue_name,
+        routing_key='pedido.excluido',
+    )
+
+    channel.basic_consume(
+        queue=queue_name,
+        on_message_callback=receber_mensagem,
+        auto_ack=False,
+    )
+
+    print("[ESTOQUE] Aguardando eventos do RabbitMQ...")
     channel.start_consuming()

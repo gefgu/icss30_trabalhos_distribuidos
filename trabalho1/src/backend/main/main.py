@@ -22,7 +22,9 @@
 # routing key pedido.excluido.
 
 import json
+import ast
 import threading
+from Crypto.PublicKey import RSA
 import pika
 import os
 import sys
@@ -33,7 +35,8 @@ from pathlib import Path
 from helpers.helper import (
     EXCHANGE_ECOMMERCE_NAME,
     init_ecommerce_exchange,
-    verificar_assinatura,
+    assinar_mensagem,
+    verificar_assinatura
 )
 
 FILE_FOLDER_PATH = Path(__file__).resolve().parents[0]
@@ -56,12 +59,26 @@ pedidos = [
     },
 ]
 
+FILE_FOLDER_PATH = Path(__file__).resolve().parents[0]
+
+PRIVATE_KEY_FILE = FILE_FOLDER_PATH / "principal_private.pem"
+PUBLIC_KEY_FILE = FILE_FOLDER_PATH / "principal_public.pem"
 
 class MenuInterativo:
     def __init__(self):
         connection = pika.BlockingConnection(
             pika.ConnectionParameters(host="localhost")
         )
+
+        key = RSA.generate(2048)
+        private_key = key.export_key()
+        with open(PRIVATE_KEY_FILE, "wb") as f:
+            f.write(private_key)
+    
+        public_key = key.publickey().export_key()
+        with open(PUBLIC_KEY_FILE, "wb") as f:
+            f.write(public_key)
+
         self.channel = connection.channel()
         init_ecommerce_exchange(self.channel)
 
@@ -243,10 +260,14 @@ class MenuInterativo:
             "pagamento": None,
         }
 
+        body_str = str(novo_pedido)
+        signature = assinar_mensagem(body_str, PRIVATE_KEY_FILE)
+
         self.channel.basic_publish(
             exchange=EXCHANGE_ECOMMERCE_NAME,
             routing_key="pedido.criado",
-            body=str(novo_pedido),
+            body=body_str,
+            properties=pika.BasicProperties(headers={"signature": signature}),
         )
 
         pedidos.append(novo_pedido)
@@ -256,15 +277,24 @@ class MenuInterativo:
         print("\nDigite o ID do pedido que deseja excluir:")
         id_pedido = input()
 
+        try:
+            id_val = int(id_pedido)
+        except ValueError:
+            id_val = id_pedido
+
+        payload = {"id": id_val}
+        body_str = str(payload)
+        signature = assinar_mensagem(body_str, PRIVATE_KEY_FILE)
         # Encontra o pedido com o ID informado
         pedido = next((p for p in pedidos if p["id"] == id_pedido), None)
         if pedido:
             pedidos.remove(pedido)
-            # Publica o evento de exclusão do pedido no RabbitMQ
+            # Publica o evento de exclusão do pedido no RabbitMQ (body string + signature header)
             self.channel.basic_publish(
                 exchange=EXCHANGE_ECOMMERCE_NAME,
                 routing_key="pedido.excluido",
-                body=str(id_pedido),
+                body=body_str,
+                properties=pika.BasicProperties(headers={"signature": signature}),
             )
 
             print(f"Pedido {id_pedido} excluído com sucesso.")
@@ -326,38 +356,58 @@ class MenuInterativo:
             pedido["status"] = "enviado"
 
     def processa_pedido_estoque_ok(self, ch, method, properties, body):
-        print(f"\nPedido estoque ok: {body.decode()}")
+        body_str = body.decode("utf-8") if isinstance(body, (bytes, bytearray)) else str(body)
 
-        # Atualiza o status do estoque do pedido
-        body_data = body
-        body_dict = json.loads(body_data)
-        id_pedido = body_dict.get("id")
-        signature = body_dict.get("signature")
+        signature = None
+        if properties and getattr(properties, "headers", None):
+            signature = properties.headers.get("signature")
 
-        # Verifica a assinatura digital 
-        if verificar_assinatura(id_pedido, signature, SRC_FOLDER / "estoque/public.pem"):
-            print("The signature is valid.")
-        else:
-            print("The signature is not valid.")
+        estoque_pub = SRC_FOLDER / "estoque" / "estoque_public.pem"
+        if signature is None or not verificar_assinatura(body_str, signature, estoque_pub):
+            print("Assinatura inválida no evento pedido.estoque_ok")
             return
-        
+
+        try:
+            body_dict = ast.literal_eval(body_str)
+        except Exception:
+            body_dict = json.loads(body_str)
+
+        id_pedido = body_dict.get("id")
 
         pedido = next((p for p in pedidos if p["id"] == id_pedido), None)
         if pedido:
             pedido["estoque"] = "ok"
 
     def processa_estoque_indisponivel(self, ch, method, properties, body):
-        print(f"Estoque indisponível: {body.decode()}")
+        body_str = body.decode("utf-8") if isinstance(body, (bytes, bytearray)) else str(body)
 
-        id_pedido = body.decode()
+        signature = None
+        if properties and getattr(properties, "headers", None):
+            signature = properties.headers.get("signature")
+
+        estoque_pub = SRC_FOLDER / "estoque" / "estoque_public.pem"
+        if signature is None or not verificar_assinatura(body_str, signature, estoque_pub):
+            print("Assinatura inválida no evento estoque.indisponivel")
+            return
+
+        try:
+            body_dict = ast.literal_eval(body_str)
+        except Exception:
+            body_dict = json.loads(body_str)
+
+        id_pedido = body_dict.get("id")
         pedido = next((p for p in pedidos if p["id"] == id_pedido), None)
         if pedido:
             pedido["estoque"] = "indisponível"
-            # Publica o evento de exclusão do pedido no RabbitMQ
+            # Publica o evento de exclusão do pedido no RabbitMQ (no main we reuse header signing)
+            payload = {"id": id_pedido}
+            body_out = str(payload)
+            signature_out = assinar_mensagem(body_out, PRIVATE_KEY_FILE)
             self.consumer_channel.basic_publish(
                 exchange=EXCHANGE_ECOMMERCE_NAME,
                 routing_key="pedido.excluido",
-                body=str(id_pedido),
+                body=body_out,
+                properties=pika.BasicProperties(headers={"signature": signature_out}),
             )
 
 

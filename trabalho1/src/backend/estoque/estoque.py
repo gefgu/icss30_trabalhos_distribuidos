@@ -22,8 +22,9 @@ from pathlib import Path
 
 from helpers.helper import (
     EXCHANGE_ECOMMERCE_NAME,
-    assinar_mensagem,
     init_ecommerce_exchange,
+    assinar_mensagem,
+    verificar_assinatura
 )
 
 
@@ -38,8 +39,8 @@ reservas = {}
 
 FILE_FOLDER_PATH = Path(__file__).resolve().parents[0]
 
-PRIVATE_KEY_FILE = FILE_FOLDER_PATH / "private.pem"
-PUBLIC_KEY_FILE = FILE_FOLDER_PATH / "public.pem"
+PRIVATE_KEY_FILE = FILE_FOLDER_PATH / "estoque_private.pem"
+PUBLIC_KEY_FILE = FILE_FOLDER_PATH / "estoque_public.pem"
 
 
 def _parse_mensagem(body):
@@ -147,36 +148,55 @@ def receber_mensagem(ch, method, properties, body):
     routing_key = method.routing_key
 
     if routing_key == "pedido.criado":
+        # verify signature from producer (main) using its public key
+        body_str = body.decode("utf-8") if isinstance(body, (bytes, bytearray)) else str(body)
+        signature_in = None
+        if properties and getattr(properties, "headers", None):
+            signature_in = properties.headers.get("signature")
+
+        producer_pub = FILE_FOLDER_PATH.parent / "main" / "principal_public.pem"
+        if signature_in is None or not verificar_assinatura(body_str, signature_in, producer_pub):
+            print(f"[ESTOQUE] Assinatura inválida no pedido.criado: {mensagem}")
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+            return
+
         resultado = processar_pedido(mensagem)
         pedido_id = resultado["id"]
-        signature = assinar_mensagem(pedido_id, PRIVATE_KEY_FILE)
+
+        # publish as plain string and put signature in header
+        payload = {"id": pedido_id}
+        body_out = str(payload)
+        signature_out = assinar_mensagem(body_out, PRIVATE_KEY_FILE)
 
         if resultado["status"] == "estoque_ok":
             ch.basic_publish(
                 exchange=EXCHANGE_ECOMMERCE_NAME,
                 routing_key="pedido.estoque_ok",
-                body=json.dumps(
-                    {
-                        "id": pedido_id,
-                        "signature": signature,
-                    }
-                ),
+                body=body_out,
+                properties=pika.BasicProperties(headers={"signature": signature_out}),
             )
             print(f"[ESTOQUE] Pedido {pedido_id} passou pela validação do estoque.")
         else:
             ch.basic_publish(
                 exchange=EXCHANGE_ECOMMERCE_NAME,
                 routing_key="estoque.indisponivel",
-                body=json.dumps(
-                    {
-                        "id": pedido_id,
-                        "signature": signature,
-                    }
-                ),
+                body=body_out,
+                properties=pika.BasicProperties(headers={"signature": signature_out}),
             )
             print(f"[ESTOQUE] Pedido {pedido_id} indisponível: {resultado['mensagem']}")
 
     elif routing_key == "pedido.excluido":
+        body_str = body.decode("utf-8") if isinstance(body, (bytes, bytearray)) else str(body)
+        signature_in = None
+        if properties and getattr(properties, "headers", None):
+            signature_in = properties.headers.get("signature")
+
+        producer_pub = FILE_FOLDER_PATH.parent / "main" / "principal_public.pem"
+        if signature_in is None or not verificar_assinatura(body_str, signature_in, producer_pub):
+            print(f"[ESTOQUE] Assinatura inválida no pedido.excluido: {mensagem}")
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+            return
+
         pedido_id = _obter_id_pedido(mensagem)
         resultado = processar_exclusao(pedido_id)
         print(f"[ESTOQUE] Pedido {resultado['id']} cancelado e devolvido ao estoque.")

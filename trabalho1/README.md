@@ -21,6 +21,8 @@ Entre em `src` e execute o processo desejado como módulo. Por exemplo:
 cd src
 uv run python -m consumidores.consumidores
 uv run python -m backend.main.main
+uv run python -m backend.estoque.estoque
+uv run python -m backend.pagamento.pagamento
 ```
 
 O RabbitMQ deve estar ativo antes da execução dos consumidores e microsserviços.

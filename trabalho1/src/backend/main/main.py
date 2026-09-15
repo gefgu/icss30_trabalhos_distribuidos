@@ -21,15 +21,24 @@
 # pedido for recusado, o microsserviço Principal deverá publicar um evento utilizando a
 # routing key pedido.excluido.
 
+import json
 import threading
-
+from Crypto.PublicKey import RSA
 import pika
 import os
 import sys
 import subprocess
 from time import sleep
+from Crypto.Signature import pkcs1_15
+from Crypto.Hash import SHA256
+from Crypto.PublicKey import RSA
+from pathlib import Path
 
 from helpers.helper import init_ecommerce_exchange, EXCHANGE_ECOMMERCE_NAME
+
+FILE_FOLDER_PATH = Path(__file__).resolve().parents[0]
+SRC_FOLDER = Path(__file__).resolve().parents[1]
+
 
 produtos = [
     {"id": 1, "nome": "Produto A", "categoria": "A", "estoque": 5},
@@ -320,7 +329,25 @@ class MenuInterativo:
         print(f"\nPedido estoque ok: {body.decode()}")
 
         # Atualiza o status do estoque do pedido
-        id_pedido = body.decode()
+        body_data = body
+        body_dict = json.loads(body_data)
+        id_pedido = body_dict.get("id")
+        signature = body_dict.get("signature")
+        signature_bytes = bytes.fromhex(signature)
+
+        # Verifica a assinatura digital 
+        with open(SRC_FOLDER / "estoque/public.pem", "rb") as f:
+            public_key = RSA.import_key(f.read())
+
+        h = SHA256.new( str(id_pedido).encode("utf-8") )
+        try:
+            pkcs1_15.new(public_key).verify(h, signature_bytes)
+            print("The signature is valid.")
+        except (ValueError, TypeError):
+            print("The signature is not valid.")
+            return
+        
+
         pedido = next((p for p in pedidos if p["id"] == id_pedido), None)
         if pedido:
             pedido["estoque"] = "ok"

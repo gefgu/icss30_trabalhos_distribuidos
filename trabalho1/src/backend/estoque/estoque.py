@@ -16,10 +16,16 @@
 
 import ast
 import json
-
+from Crypto.PublicKey import RSA
+from Crypto.Signature import pkcs1_15
+from Crypto.Hash import SHA256
+from Crypto.PublicKey import RSA
 import pika
+from pathlib import Path
 
+  
 from helpers.helper import EXCHANGE_ECOMMERCE_NAME, init_ecommerce_exchange
+
 
 produtos = [
     {"id": 1, "nome": "Produto A", "categoria": "A", "estoque": 5},
@@ -29,6 +35,11 @@ produtos = [
 ]
 
 reservas = {}
+
+FILE_FOLDER_PATH = Path(__file__).resolve().parents[0]
+
+PRIVATE_KEY_FILE = FILE_FOLDER_PATH / "private.pem"
+PUBLIC_KEY_FILE = FILE_FOLDER_PATH / "public.pem"
 
 
 def _parse_mensagem(body):
@@ -74,7 +85,11 @@ def processar_pedido(pedido):
     itens = dados.get("produtos", []) if isinstance(dados, dict) else []
 
     if not itens:
-        return {"id": pedido_id, "status": "indisponivel", "mensagem": "Pedido sem produtos."}
+        return {
+            "id": pedido_id,
+            "status": "indisponivel",
+            "mensagem": "Pedido sem produtos.",
+        }
 
     itens_para_reservar = []
     for item in itens:
@@ -83,10 +98,18 @@ def processar_pedido(pedido):
         produto = next((p for p in produtos if p["id"] == produto_id), None)
 
         if produto is None:
-            return {"id": pedido_id, "status": "indisponivel", "mensagem": f"Produto {produto_id} não encontrado."}
+            return {
+                "id": pedido_id,
+                "status": "indisponivel",
+                "mensagem": f"Produto {produto_id} não encontrado.",
+            }
 
         if produto["estoque"] < quantidade:
-            return {"id": pedido_id, "status": "indisponivel", "mensagem": f"Produto {produto_id} sem estoque suficiente."}
+            return {
+                "id": pedido_id,
+                "status": "indisponivel",
+                "mensagem": f"Produto {produto_id} sem estoque suficiente.",
+            }
 
         itens_para_reservar.append({"id": produto_id, "quantidade": quantidade})
 
@@ -96,7 +119,11 @@ def processar_pedido(pedido):
             produto["estoque"] -= item["quantidade"]
 
     reservas[pedido_id] = itens_para_reservar
-    return {"id": pedido_id, "status": "estoque_ok", "mensagem": "Produto(s) reservados com sucesso."}
+    return {
+        "id": pedido_id,
+        "status": "estoque_ok",
+        "mensagem": "Produto(s) reservados com sucesso.",
+    }
 
 
 def processar_exclusao(pedido_id):
@@ -108,7 +135,11 @@ def processar_exclusao(pedido_id):
         if produto is not None:
             produto["estoque"] += item["quantidade"]
 
-    return {"id": id_pedido, "status": "pedido_cancelado", "mensagem": "Produtos devolvidos ao estoque."}
+    return {
+        "id": id_pedido,
+        "status": "pedido_cancelado",
+        "mensagem": "Produtos devolvidos ao estoque.",
+    }
 
 
 def receber_mensagem(ch, method, properties, body):
@@ -118,19 +149,32 @@ def receber_mensagem(ch, method, properties, body):
     if routing_key == "pedido.criado":
         resultado = processar_pedido(mensagem)
         pedido_id = resultado["id"]
+        signature = pkcs1_15.new(RSA.import_key(open(PRIVATE_KEY_FILE).read())).sign(
+            SHA256.new(str(pedido_id).encode())
+        )
 
         if resultado["status"] == "estoque_ok":
             ch.basic_publish(
                 exchange=EXCHANGE_ECOMMERCE_NAME,
                 routing_key="pedido.estoque_ok",
-                body=str(pedido_id),
+                body=json.dumps(
+                    {
+                        "id": pedido_id,
+                        "signature": signature.hex(),
+                    }
+                ),
             )
             print(f"[ESTOQUE] Pedido {pedido_id} passou pela validação do estoque.")
         else:
             ch.basic_publish(
                 exchange=EXCHANGE_ECOMMERCE_NAME,
                 routing_key="estoque.indisponivel",
-                body=str(pedido_id),
+                body=json.dumps(
+                    {
+                        "id": pedido_id,
+                        "signature": signature.hex(),
+                    }
+                ),
             )
             print(f"[ESTOQUE] Pedido {pedido_id} indisponível: {resultado['mensagem']}")
 
@@ -142,25 +186,34 @@ def receber_mensagem(ch, method, properties, body):
     ch.basic_ack(delivery_tag=method.delivery_tag)
 
 
-if __name__ == '__main__':
-    connection = pika.BlockingConnection(pika.ConnectionParameters(host='localhost'))
+if __name__ == "__main__":
+    connection = pika.BlockingConnection(pika.ConnectionParameters(host="localhost"))
     channel = connection.channel()
 
     init_ecommerce_exchange(channel)
 
-    queue_name = 'estoque'
+    key = RSA.generate(2048)
+    private_key = key.export_key()
+    with open(PRIVATE_KEY_FILE, "wb") as f:
+        f.write(private_key)
+
+    public_key = key.publickey().export_key()
+    with open(PUBLIC_KEY_FILE, "wb") as f:
+        f.write(public_key)
+
+    queue_name = "estoque"
     channel.queue_declare(queue=queue_name, durable=True)
 
     channel.queue_bind(
         exchange=EXCHANGE_ECOMMERCE_NAME,
         queue=queue_name,
-        routing_key='pedido.criado',
+        routing_key="pedido.criado",
     )
 
     channel.queue_bind(
         exchange=EXCHANGE_ECOMMERCE_NAME,
         queue=queue_name,
-        routing_key='pedido.excluido',
+        routing_key="pedido.excluido",
     )
 
     channel.basic_consume(

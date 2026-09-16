@@ -8,13 +8,27 @@
 # evento utilizando a routing key pagamento.aprovado.
 # Quando o pagamento for recusado, deverá publicar um evento utilizando a routing
 # key pagamento.recusado.
-import json
 import random
-
+import ast
+import json
+from Crypto.PublicKey import RSA
 import pika
+from pathlib import Path
 
-from helpers.helper import EXCHANGE_ECOMMERCE_NAME, init_ecommerce_exchange
+from helpers.helper import (
+    EXCHANGE_ECOMMERCE_NAME,
+    init_ecommerce_exchange,
+    assinar_mensagem,
+    verificar_assinatura,
+    create_cryptography_keys,
+)
 
+FILE_FOLDER_PATH = Path(__file__).resolve().parents[0]
+
+PRIVATE_KEY_FILE = FILE_FOLDER_PATH / "pagamento_private.pem"
+PUBLIC_KEY_FILE_PAGAMENTO = FILE_FOLDER_PATH / "pagamento_public.pem"
+PUBLIC_KEY_FILE_ESTOQUE = FILE_FOLDER_PATH.parent / "main" / "estoque_public.pem"
+PUBLIC_KEY_FILE_PRINCIPAL = FILE_FOLDER_PATH.parent / "main" / "principal_public.pem"
 
 def _parse_mensagem(body):
     if isinstance(body, (bytes, bytearray)):
@@ -30,8 +44,6 @@ def _parse_mensagem(body):
         return json.loads(conteudo)
     except json.JSONDecodeError:
         try:
-            import ast
-
             return ast.literal_eval(conteudo)
         except (ValueError, SyntaxError):
             return {"id": conteudo}
@@ -50,16 +62,45 @@ def processar_pagamento(pedido):
 
 def receber_mensagem(ch, method, properties, body):
     pedido = _parse_mensagem(body)
-    resultado = processar_pagamento(pedido)
+    routing_key = method.routing_key
+    
+    if routing_key == "pedido.estoque_ok":
+        # verify signature from producer (main) using its public key
+        body_str = body.decode("utf-8") if isinstance(body, (bytes, bytearray)) else str(body)
+        signature_in = None
+        if properties and getattr(properties, "headers", None):
+            signature_in = properties.headers.get("signature")
 
-    ch.basic_publish(
-        exchange=EXCHANGE_ECOMMERCE_NAME,
-        routing_key=resultado["routing_key"],
-        body=str(resultado["id"]),
-    )
+        if signature_in is None or not verificar_assinatura(body_str, signature_in, PUBLIC_KEY_FILE_ESTOQUE):
+            print(f"[ESTOQUE] Assinatura inválida no pedido.criado: {pedido}")
+            ch.basic_ack(delivery_tag=method.delivery_tag)
+            return
 
-    print(f"[PAGAMENTO] Pedido {resultado['id']} -> {resultado['status']}")
-    ch.basic_ack(delivery_tag=method.delivery_tag)
+        resultado = processar_pagamento(pedido)
+        pedido_id = resultado["id"]
+
+        # publish as plain string and put signature in header
+        payload = {"id": pedido_id}
+        body_out = str(payload)
+        signature_out = assinar_mensagem(body_out, PRIVATE_KEY_FILE)
+
+        if resultado["status"] == "aprovado":
+            ch.basic_publish(
+                exchange=EXCHANGE_ECOMMERCE_NAME,
+                routing_key="pagamento.aprovado",
+                body=body_out,
+                properties=pika.BasicProperties(headers={"signature": signature_out}),
+            )
+            print(f"[ESTOQUE] Pedido {pedido_id} passou pela validação do estoque.")
+        else:
+            ch.basic_publish(
+                exchange=EXCHANGE_ECOMMERCE_NAME,
+                routing_key="pagamento.recusado",
+                body=body_out,
+                properties=pika.BasicProperties(headers={"signature": signature_out}),
+            )
+            print(f"[ESTOQUE] Pedido {pedido_id} indisponível: {resultado['mensagem']}")
+    
 
 
 if __name__ == '__main__':
@@ -67,6 +108,8 @@ if __name__ == '__main__':
     channel = connection.channel()
 
     init_ecommerce_exchange(channel)
+
+    create_cryptography_keys(PRIVATE_KEY_FILE, PUBLIC_KEY_FILE_PAGAMENTO)
 
     queue_name = 'pagamento'
     channel.queue_declare(queue=queue_name, durable=True)

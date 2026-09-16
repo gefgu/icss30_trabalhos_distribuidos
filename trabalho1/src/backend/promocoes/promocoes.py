@@ -8,13 +8,12 @@ import random
 from time import sleep
 import pika
 from pathlib import Path
-from Crypto.PublicKey import RSA
 
 
 from helpers.helper import (
     EXCHANGE_PROMOCOES_NAME,
     assinar_mensagem,
-    create_cryptrography_keys,
+    create_cryptography_keys,
     init_promocoes_exchange,
 )
 
@@ -55,7 +54,7 @@ if __name__ == "__main__":
 
     init_promocoes_exchange(channel)
 
-    private_key = create_cryptrography_keys(PRIVATE_KEY_FILE, PUBLIC_KEY_FILE)
+    create_cryptography_keys(PRIVATE_KEY_FILE, PUBLIC_KEY_FILE)
 
     print("[PROMOCOES] Gerando e publicando promoções...")
     try:

@@ -16,7 +16,6 @@
 
 import ast
 import json
-from Crypto.PublicKey import RSA
 import pika
 from pathlib import Path
 
@@ -24,7 +23,8 @@ from helpers.helper import (
     EXCHANGE_ECOMMERCE_NAME,
     init_ecommerce_exchange,
     assinar_mensagem,
-    verificar_assinatura
+    verificar_assinatura,
+    create_cryptography_keys,
 )
 
 
@@ -210,14 +210,7 @@ if __name__ == "__main__":
 
     init_ecommerce_exchange(channel)
 
-    key = RSA.generate(2048)
-    private_key = key.export_key()
-    with open(PRIVATE_KEY_FILE, "wb") as f:
-        f.write(private_key)
-
-    public_key = key.publickey().export_key()
-    with open(PUBLIC_KEY_FILE, "wb") as f:
-        f.write(public_key)
+    create_cryptography_keys(PRIVATE_KEY_FILE, PUBLIC_KEY_FILE)
 
     queue_name = "estoque"
     channel.queue_declare(queue=queue_name, durable=True)

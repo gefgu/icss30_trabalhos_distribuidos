@@ -39,7 +39,7 @@ def init_ecommerce_exchange(channel):
     """
     channel.exchange_declare(exchange='ecommerce', exchange_type='direct')
 
-def create_cryptrography_keys(private_key_path, public_key_path):
+def create_cryptography_keys(private_key_path, public_key_path):
     """
     Cria um par de chaves RSA e salva em arquivos.
     """

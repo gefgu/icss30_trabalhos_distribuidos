@@ -7,9 +7,49 @@
 # exclusivamente com o RabbitMQ, consumindo eventos de promoções.
 
 import pika
-from helpers.helper import init_promocoes_exchange, EXCHANGE_PROMOCOES_NAME
+from helpers.helper import (
+    init_promocoes_exchange,
+    EXCHANGE_PROMOCOES_NAME,
+    verificar_assinatura,
+)
 import os
 import sys
+from pathlib import Path
+from Crypto.PublicKey import RSA
+
+FILE_FOLDER_PATH = Path(__file__).resolve().parents[0]
+
+PRIVATE_KEY_FILE = FILE_FOLDER_PATH / "consumidores_promocoes_private.pem"
+PUBLIC_KEY_FILE = FILE_FOLDER_PATH / "consumidores_promocoes_public.pem"
+PROMOCOES_PUBLIC_KEY_FILE = FILE_FOLDER_PATH.parent.parent / "promocoes" / "promocoes_public.pem"
+
+
+def callback_consumidores(ch, method, properties, body):
+    body_str = (
+        body.decode("utf-8") if isinstance(body, (bytes, bytearray)) else str(body)
+    )
+
+    signature_in = None
+    if properties.headers and "signature" in properties.headers:
+        signature_in = properties.headers["signature"]
+
+    if signature_in is None or not verificar_assinatura(
+        body_str, signature_in, PROMOCOES_PUBLIC_KEY_FILE
+    ):
+        print("Assinatura inválida. Promoção descartada.")
+        return
+
+    print(f"Promoção {body_str} válida. Processando...")
+
+
+def callback_c1(ch, method, properties, body):
+    print(f"Consumidor C1 recebeu promoção")
+    callback_consumidores(ch, method, properties, body)
+
+
+def callback_c2(ch, method, properties, body):
+    print(f"Consumidor C2 recebeu promoção")
+    callback_consumidores(ch, method, properties, body)
 
 
 def main():
@@ -17,6 +57,16 @@ def main():
     channel = connection.channel()
 
     init_promocoes_exchange(channel)
+
+    key = RSA.generate(2048)
+    private_key = key.export_key()
+    with open(PRIVATE_KEY_FILE, "wb") as f:
+        f.write(private_key)
+
+    public_key = key.publickey().export_key()
+    with open(PUBLIC_KEY_FILE, "wb") as f:
+        f.write(public_key)
+
 
     # Consumidor C1: Interesse nas categorias A e B
     queue_name_c1 = "consumidor_c1"
@@ -46,12 +96,6 @@ def main():
     )
 
     print("Consumidores C1 e C2 estão aguardando promoções...")
-
-    def callback_c1(ch, method, properties, body):
-        print(f"Consumidor C1 recebeu promoção: {body.decode()}")
-
-    def callback_c2(ch, method, properties, body):
-        print(f"Consumidor C2 recebeu promoção: {body.decode()}")
 
     channel.basic_consume(
         queue=queue_name_c1, on_message_callback=callback_c1, auto_ack=True

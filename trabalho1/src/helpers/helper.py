@@ -38,3 +38,20 @@ def init_ecommerce_exchange(channel):
     Inicializa o exchange de e-commerce no RabbitMQ.
     """
     channel.exchange_declare(exchange='ecommerce', exchange_type='direct')
+
+def create_cryptrography_keys(private_key_path, public_key_path):
+    """
+    Cria um par de chaves RSA e salva em arquivos.
+    """
+    key = RSA.generate(2048)
+    private_key = key.export_key()
+    if not Path(private_key_path).exists():
+        with open(private_key_path, "wb") as f:
+            f.write(private_key)
+
+    public_key = key.publickey().export_key()
+    if not Path(public_key_path).exists():
+        with open(public_key_path, "wb") as f:
+            f.write(public_key)
+
+    return private_key

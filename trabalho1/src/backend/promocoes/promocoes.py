@@ -6,10 +6,17 @@
 import json
 import random
 from time import sleep
-
 import pika
+from pathlib import Path
+from Crypto.PublicKey import RSA
 
-from helpers.helper import EXCHANGE_PROMOCOES_NAME, init_promocoes_exchange
+
+from helpers.helper import (
+    EXCHANGE_PROMOCOES_NAME,
+    assinar_mensagem,
+    create_cryptrography_keys,
+    init_promocoes_exchange,
+)
 
 produtos = [
     {"id": 1, "nome": "Produto A", "categoria": "A"},
@@ -17,6 +24,12 @@ produtos = [
     {"id": 3, "nome": "Produto C", "categoria": "C"},
     {"id": 4, "nome": "Produto A1", "categoria": "A"},
 ]
+
+
+FILE_FOLDER_PATH = Path(__file__).resolve().parents[0]
+
+PRIVATE_KEY_FILE = FILE_FOLDER_PATH / "promocoes_private.pem"
+PUBLIC_KEY_FILE = FILE_FOLDER_PATH / "promocoes_public.pem"
 
 
 def gerar_promocao():
@@ -36,21 +49,27 @@ def gerar_promocao():
     return promocao, routing_key
 
 
-if __name__ == '__main__':
-    connection = pika.BlockingConnection(pika.ConnectionParameters(host='localhost'))
+if __name__ == "__main__":
+    connection = pika.BlockingConnection(pika.ConnectionParameters(host="localhost"))
     channel = connection.channel()
 
     init_promocoes_exchange(channel)
+
+    private_key = create_cryptrography_keys(PRIVATE_KEY_FILE, PUBLIC_KEY_FILE)
 
     print("[PROMOCOES] Gerando e publicando promoções...")
     try:
         while True:
             promocao, routing_key = gerar_promocao()
 
+            body_out = str(promocao)
+            signature_out = assinar_mensagem(body_out, PRIVATE_KEY_FILE)
+
             channel.basic_publish(
                 exchange=EXCHANGE_PROMOCOES_NAME,
                 routing_key=routing_key,
-                body=json.dumps(promocao),
+                body=body_out.encode("utf-8"),
+                properties=pika.BasicProperties(headers={"signature": signature_out}),
             )
 
             print(

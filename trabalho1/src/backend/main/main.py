@@ -349,6 +349,7 @@ class MenuInterativo:
             pedido["status"] = "enviado"
 
     def processa_pedido_estoque_ok(self, ch, method, properties, body):
+        # LEMBRAR DE DAR BAIXA NO ESTOQUE
         body_str = body.decode("utf-8") if isinstance(body, (bytes, bytearray)) else str(body)
 
         signature = None

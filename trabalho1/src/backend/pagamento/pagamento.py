@@ -11,7 +11,6 @@
 import random
 import ast
 import json
-from Crypto.PublicKey import RSA
 import pika
 from pathlib import Path
 
@@ -27,8 +26,7 @@ FILE_FOLDER_PATH = Path(__file__).resolve().parents[0]
 
 PRIVATE_KEY_FILE = FILE_FOLDER_PATH / "pagamento_private.pem"
 PUBLIC_KEY_FILE_PAGAMENTO = FILE_FOLDER_PATH / "pagamento_public.pem"
-PUBLIC_KEY_FILE_ESTOQUE = FILE_FOLDER_PATH.parent / "main" / "estoque_public.pem"
-PUBLIC_KEY_FILE_PRINCIPAL = FILE_FOLDER_PATH.parent / "main" / "principal_public.pem"
+PUBLIC_KEY_FILE_ESTOQUE = FILE_FOLDER_PATH.parent / "estoque" / "estoque_public.pem"
 
 def _parse_mensagem(body):
     if isinstance(body, (bytes, bytearray)):
@@ -99,7 +97,9 @@ def receber_mensagem(ch, method, properties, body):
                 body=body_out,
                 properties=pika.BasicProperties(headers={"signature": signature_out}),
             )
-            print(f"[ESTOQUE] Pedido {pedido_id} indisponível: {resultado['mensagem']}")
+            print(f"[PAGAMENTO] Pedido {pedido_id} -> {resultado['status']}")
+
+        ch.basic_ack(delivery_tag=method.delivery_tag)
     
 
 

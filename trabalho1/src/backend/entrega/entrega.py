@@ -7,17 +7,42 @@
 
 import ast
 import json
+from pathlib import Path
 
 import pika
 
-from helpers.helper import EXCHANGE_ECOMMERCE_NAME, init_ecommerce_exchange
+from helpers.helper import (
+    EXCHANGE_ECOMMERCE_NAME,
+    assinar_mensagem,
+    create_cryptography_keys,
+    init_ecommerce_exchange,
+    verificar_assinatura,
+)
+
+FILE_FOLDER_PATH = Path(__file__).resolve().parents[0]
+
+PRIVATE_KEY_FILE = FILE_FOLDER_PATH / "entrega_private.pem"
+PUBLIC_KEY_FILE = FILE_FOLDER_PATH / "entrega_public.pem"
+PAGAMENTO_PUBLIC_KEY_FILE = (
+    FILE_FOLDER_PATH.parent.parent / "pagamento" / "pagamento_public.pem"
+)
 
 
-def _parse_mensagem(body):
+def _parse_mensagem(body, properties=None):
     if isinstance(body, (bytes, bytearray)):
         conteudo = body.decode("utf-8")
     else:
         conteudo = str(body)
+
+    signature_in = None
+    if properties and properties.headers and "signature" in properties.headers:
+        signature_in = properties.headers["signature"]
+
+    if signature_in is None or not verificar_assinatura(
+        conteudo, signature_in, PAGAMENTO_PUBLIC_KEY_FILE
+    ):
+        print("Assinatura inválida. Pedido descartado.")
+        return False
 
     conteudo = conteudo.strip()
     if not conteudo or conteudo in {"None", "null"}:
@@ -68,31 +93,39 @@ def processar_entrega(pedido):
 
 
 def receber_mensagem(ch, method, properties, body):
-    pedido = _parse_mensagem(body)
+    pedido = _parse_mensagem(body, properties)
+    if pedido is False:
+        return
     resultado = processar_entrega(pedido)
+
+    body_out = str(resultado)
+    signature_out = assinar_mensagem(body_out, PRIVATE_KEY_FILE)
 
     ch.basic_publish(
         exchange=EXCHANGE_ECOMMERCE_NAME,
         routing_key=resultado["routing_key"],
-        body=str(resultado["id"]),
+        body=body_out.encode("utf-8"),
+        properties=pika.BasicProperties(headers={"signature": signature_out}),
     )
 
     print(f"[ENTREGA] Pedido {resultado['id']} -> {resultado['status']}")
     ch.basic_ack(delivery_tag=method.delivery_tag)
 
 
-if __name__ == '__main__':
-    connection = pika.BlockingConnection(pika.ConnectionParameters(host='localhost'))
+if __name__ == "__main__":
+    connection = pika.BlockingConnection(pika.ConnectionParameters(host="localhost"))
     channel = connection.channel()
 
     init_ecommerce_exchange(channel)
 
-    queue_name = 'entrega'
+    private_key = create_cryptography_keys(PRIVATE_KEY_FILE, PUBLIC_KEY_FILE)
+
+    queue_name = "entrega"
     channel.queue_declare(queue=queue_name, durable=True)
     channel.queue_bind(
         exchange=EXCHANGE_ECOMMERCE_NAME,
         queue=queue_name,
-        routing_key='pagamento.aprovado',
+        routing_key="pagamento.aprovado",
     )
 
     channel.basic_consume(

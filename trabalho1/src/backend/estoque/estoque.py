@@ -95,12 +95,25 @@ def processar_pedido(pedido):
             "mensagem": "Pedido sem produtos.",
         }
 
-    itens_para_reservar = []
+    quantidades_por_produto = {}
     for item in itens:
         produto_id = item.get("id") if isinstance(item, dict) else item
         quantidade = item.get("quantidade", 1) if isinstance(item, dict) else 1
-        produto = next((p for p in produtos if p["id"] == produto_id), None)
 
+        if not isinstance(quantidade, int) or isinstance(quantidade, bool) or quantidade < 1:
+            return {
+                "id": pedido_id,
+                "status": "indisponivel",
+                "mensagem": f"Quantidade inválida para o produto {produto_id}.",
+            }
+
+        quantidades_por_produto[produto_id] = (
+            quantidades_por_produto.get(produto_id, 0) + quantidade
+        )
+
+    itens_para_reservar = []
+    for produto_id, quantidade in quantidades_por_produto.items():
+        produto = next((p for p in produtos if p["id"] == produto_id), None)
         if produto is None:
             return {
                 "id": pedido_id,

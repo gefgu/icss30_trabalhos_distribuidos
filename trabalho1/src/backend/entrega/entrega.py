@@ -95,6 +95,7 @@ def processar_entrega(pedido):
 def receber_mensagem(ch, method, properties, body):
     pedido = _parse_mensagem(body, properties)
     if pedido is False:
+        ch.basic_ack(delivery_tag=method.delivery_tag)
         return
     resultado = processar_entrega(pedido)
 

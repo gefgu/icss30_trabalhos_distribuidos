@@ -146,41 +146,9 @@ def processar_exclusao(pedido_id):
     }
 
 
-def consultar_estoque():
-    return [produto.copy() for produto in produtos]
-
-
 def receber_mensagem(ch, method, properties, body):
     mensagem = _parse_mensagem(body)
     routing_key = method.routing_key
-
-    if routing_key == "estoque.consulta":
-        body_str = body.decode("utf-8") if isinstance(body, (bytes, bytearray)) else str(body)
-        signature_in = None
-        if properties and getattr(properties, "headers", None):
-            signature_in = properties.headers.get("signature")
-
-        if signature_in is None or not verificar_assinatura(
-            body_str, signature_in, PRINCIPAL_PUBLIC_KEY_FILE
-        ):
-            print("[ESTOQUE] Assinatura inválida em estoque.consulta.")
-            ch.basic_ack(delivery_tag=method.delivery_tag)
-            return
-
-        resposta = {"produtos": consultar_estoque()}
-        body_out = str(resposta)
-        signature_out = assinar_mensagem(body_out, PRIVATE_KEY_FILE)
-        ch.basic_publish(
-            exchange=EXCHANGE_ECOMMERCE_NAME,
-            routing_key="estoque.resposta",
-            body=body_out,
-            properties=pika.BasicProperties(
-                headers={"signature": signature_out},
-                correlation_id=getattr(properties, "correlation_id", None),
-            ),
-        )
-        ch.basic_ack(delivery_tag=method.delivery_tag)
-        return
 
     if routing_key == "pedido.criado":
         # verify signature from producer (main) using its public key
@@ -258,12 +226,6 @@ if __name__ == "__main__":
         exchange=EXCHANGE_ECOMMERCE_NAME,
         queue=queue_name,
         routing_key="pedido.excluido",
-    )
-
-    channel.queue_bind(
-        exchange=EXCHANGE_ECOMMERCE_NAME,
-        queue=queue_name,
-        routing_key="estoque.consulta",
     )
 
     channel.basic_consume(

@@ -28,8 +28,6 @@ import pika
 import os
 import sys
 import subprocess
-import uuid
-from time import sleep
 from pathlib import Path
 
 from helpers.helper import (
@@ -239,68 +237,12 @@ class MenuInterativo:
 
     def visualizar_produtos(self):
         print("\n=== Lista de Produtos ===")
-        produtos_estoque = self.consultar_estoque()
-        if produtos_estoque is None:
-            input("\nNão foi possível consultar o serviço de estoque. Pressione [ENTER].")
-            return
-
-        for produto in produtos_estoque:
+        for produto in produtos:
             print(
-                f"ID: {produto['id']}, Nome: {produto['nome']}, Categoria: {produto['categoria']}, Estoque: {produto['estoque']}"
+                f"ID: {produto['id']}, Nome: {produto['nome']}, Categoria: {produto['categoria']}"
             )
 
         input("\nPressione [ENTER] para voltar ao menu principal.")
-
-    def consultar_estoque(self):
-        connection = pika.BlockingConnection(
-            pika.ConnectionParameters(host="localhost")
-        )
-        channel = connection.channel()
-        init_ecommerce_exchange(channel)
-
-        callback_queue = channel.queue_declare(queue="", exclusive=True).method.queue
-        correlation_id = str(uuid.uuid4())
-        channel.queue_bind(
-            exchange=EXCHANGE_ECOMMERCE_NAME,
-            queue=callback_queue,
-            routing_key="estoque.resposta",
-        )
-        body_out = "{}"
-        signature_out = assinar_mensagem(body_out, PRIVATE_KEY_FILE)
-        channel.basic_publish(
-            exchange=EXCHANGE_ECOMMERCE_NAME,
-            routing_key="estoque.consulta",
-            body=body_out,
-            properties=pika.BasicProperties(
-                reply_to=callback_queue,
-                correlation_id=correlation_id,
-                headers={"signature": signature_out},
-            ),
-        )
-
-        resposta = None
-        for method, properties, body in channel.consume(
-            callback_queue, inactivity_timeout=5, auto_ack=True
-        ):
-            if method is None:
-                break
-            if properties.correlation_id != correlation_id:
-                continue
-
-            body_str = _body_as_string(body)
-            signature = _event_signature(properties)
-            if signature is None or not verificar_assinatura(
-                body_str, signature, ESTOQUE_PUBLIC_KEY_FILE
-            ):
-                print("Assinatura inválida na resposta do estoque.")
-                break
-
-            resposta = _event_data(body)
-            break
-
-        channel.cancel()
-        connection.close()
-        return resposta.get("produtos", []) if resposta else None
 
     def realizar_pedidos(self):
         print("\n=== Realizar Pedido ===")

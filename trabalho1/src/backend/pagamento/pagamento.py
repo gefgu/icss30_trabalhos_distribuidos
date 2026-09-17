@@ -25,8 +25,10 @@ from helpers.helper import (
 FILE_FOLDER_PATH = Path(__file__).resolve().parents[0]
 
 PRIVATE_KEY_FILE = FILE_FOLDER_PATH / "pagamento_private.pem"
-PUBLIC_KEY_FILE_PAGAMENTO = FILE_FOLDER_PATH / "pagamento_public.pem"
-PUBLIC_KEY_FILE_ESTOQUE = FILE_FOLDER_PATH.parent / "estoque" / "estoque_public.pem"
+PUBLIC_KEY_FILE = FILE_FOLDER_PATH / "pagamento_public.pem"
+PRINCIPAL_PUBLIC_KEY_FILE = FILE_FOLDER_PATH.parent / "main" / "principal_public.pem"
+ESTOQUE_PUBLIC_KEY_FILE = FILE_FOLDER_PATH.parent / "estoque" / "estoque_public.pem"
+ENTREGA_PUBLIC_KEY_FILE = FILE_FOLDER_PATH.parent / "entrega" / "entrega_public.pem"
 
 def _parse_mensagem(body):
     if isinstance(body, (bytes, bytearray)):
@@ -63,14 +65,14 @@ def receber_mensagem(ch, method, properties, body):
     routing_key = method.routing_key
     
     if routing_key == "pedido.estoque_ok":
-        # verify signature from producer (main) using its public key
+        # verify signature from producer (estoque) using the stock public key
         body_str = body.decode("utf-8") if isinstance(body, (bytes, bytearray)) else str(body)
         signature_in = None
         if properties and getattr(properties, "headers", None):
             signature_in = properties.headers.get("signature")
 
-        if signature_in is None or not verificar_assinatura(body_str, signature_in, PUBLIC_KEY_FILE_ESTOQUE):
-            print(f"[ESTOQUE] Assinatura inválida no pedido.criado: {pedido}")
+        if signature_in is None or not verificar_assinatura(body_str, signature_in, ESTOQUE_PUBLIC_KEY_FILE):
+            print(f"[ESTOQUE] Assinatura inválida no pedido.estoque_ok: {pedido}")
             ch.basic_ack(delivery_tag=method.delivery_tag)
             return
 
@@ -89,7 +91,7 @@ def receber_mensagem(ch, method, properties, body):
                 body=body_out,
                 properties=pika.BasicProperties(headers={"signature": signature_out}),
             )
-            print(f"[ESTOQUE] Pedido {pedido_id} passou pela validação do estoque.")
+            print(f"[PAGAMENTO] Pedido {pedido_id} -> {resultado['status']}")
         else:
             ch.basic_publish(
                 exchange=EXCHANGE_ECOMMERCE_NAME,
@@ -109,7 +111,7 @@ if __name__ == '__main__':
 
     init_ecommerce_exchange(channel)
 
-    create_cryptography_keys(PRIVATE_KEY_FILE, PUBLIC_KEY_FILE_PAGAMENTO)
+    create_cryptography_keys(PRIVATE_KEY_FILE, PUBLIC_KEY_FILE)
 
     queue_name = 'pagamento'
     channel.queue_declare(queue=queue_name, durable=True)

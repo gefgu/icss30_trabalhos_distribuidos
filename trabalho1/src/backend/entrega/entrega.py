@@ -23,9 +23,9 @@ FILE_FOLDER_PATH = Path(__file__).resolve().parents[0]
 
 PRIVATE_KEY_FILE = FILE_FOLDER_PATH / "entrega_private.pem"
 PUBLIC_KEY_FILE = FILE_FOLDER_PATH / "entrega_public.pem"
-PAGAMENTO_PUBLIC_KEY_FILE = (
-    FILE_FOLDER_PATH.parent.parent / "pagamento" / "pagamento_public.pem"
-)
+PRINCIPAL_PUBLIC_KEY_FILE = FILE_FOLDER_PATH.parent / "main" / "principal_public.pem"
+ESTOQUE_PUBLIC_KEY_FILE = FILE_FOLDER_PATH.parent / "estoque" / "estoque_public.pem"
+PAGAMENTO_PUBLIC_KEY_FILE = FILE_FOLDER_PATH.parent / "pagamento" / "pagamento_public.pem"
 
 
 def _parse_mensagem(body, properties=None):
@@ -118,7 +118,7 @@ if __name__ == "__main__":
 
     init_ecommerce_exchange(channel)
 
-    private_key = create_cryptography_keys(PRIVATE_KEY_FILE, PUBLIC_KEY_FILE)
+    create_cryptography_keys(PRIVATE_KEY_FILE, PUBLIC_KEY_FILE)
 
     queue_name = "entrega"
     channel.queue_declare(queue=queue_name, durable=True)

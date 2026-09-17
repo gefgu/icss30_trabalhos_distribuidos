@@ -23,7 +23,7 @@ def verificar_assinatura(mensagem, assinatura_hex, public_key_path):
         digest = SHA256.new(str(mensagem).encode("utf-8"))
         pkcs1_15.new(public_key).verify(digest, assinatura)
         return True
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, IndexError):
         return False
 
 
@@ -41,17 +41,29 @@ def init_ecommerce_exchange(channel):
 
 def create_cryptography_keys(private_key_path, public_key_path):
     """
-    Cria um par de chaves RSA e salva em arquivos.
+    Garante que cada serviço possua um par de chaves RSA consistente.
+    Se o arquivo de chave estiver ausente, corrompido ou incompatível,
+    um novo par é gerado e gravado nos arquivos.
     """
+    private_path = Path(private_key_path)
+    public_path = Path(public_key_path)
+
+    if private_path.exists() and public_path.exists():
+        try:
+            private_key = RSA.import_key(private_path.read_bytes())
+            public_key = RSA.import_key(public_path.read_bytes())
+            if private_key.publickey().n == public_key.n:
+                return private_path.read_bytes()
+        except (ValueError, TypeError):
+            pass
+
     key = RSA.generate(2048)
     private_key = key.export_key()
-    if not Path(private_key_path).exists():
-        with open(private_key_path, "wb") as f:
-            f.write(private_key)
-
     public_key = key.publickey().export_key()
-    if not Path(public_key_path).exists():
-        with open(public_key_path, "wb") as f:
-            f.write(public_key)
+
+    with open(private_path, "wb") as f:
+        f.write(private_key)
+    with open(public_path, "wb") as f:
+        f.write(public_key)
 
     return private_key

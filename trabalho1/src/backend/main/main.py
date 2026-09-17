@@ -28,6 +28,7 @@ import pika
 import os
 import sys
 import subprocess
+import uuid
 from time import sleep
 from pathlib import Path
 
@@ -44,25 +45,58 @@ SRC_FOLDER = Path(__file__).resolve().parents[1]
 
 
 produtos = [
-    {"id": 1, "nome": "Produto A", "categoria": "A", "estoque": 5},
-    {"id": 2, "nome": "Produto B", "categoria": "B", "estoque": 3},
-    {"id": 3, "nome": "Produto C", "categoria": "C", "estoque": 0},
-    {"id": 4, "nome": "Produto A1", "categoria": "A", "estoque": 10},
+    {"id": 1, "nome": "Produto A", "categoria": "A"},
+    {"id": 2, "nome": "Produto B", "categoria": "B"},
+    {"id": 3, "nome": "Produto C", "categoria": "C"},
+    {"id": 4, "nome": "Produto A1", "categoria": "A"},
 ]
 
-pedidos = [
-    {
-        "id": 1,
-        "produtos": [{"id": 1, "quantidade": 2}, {"id": 2, "quantidade": 1}],
-        "estoque": None,
-        "pagamento": None,
-    },
-]
+pedidos = []
 
 FILE_FOLDER_PATH = Path(__file__).resolve().parents[0]
 
 PRIVATE_KEY_FILE = FILE_FOLDER_PATH / "principal_private.pem"
 PUBLIC_KEY_FILE = FILE_FOLDER_PATH / "principal_public.pem"
+ESTOQUE_PUBLIC_KEY_FILE = FILE_FOLDER_PATH.parent / "estoque" / "estoque_public.pem"
+PAGAMENTO_PUBLIC_KEY_FILE = FILE_FOLDER_PATH.parent / "pagamento" / "pagamento_public.pem"
+ENTREGA_PUBLIC_KEY_FILE = FILE_FOLDER_PATH.parent / "entrega" / "entrega_public.pem"
+
+
+def _body_as_string(body):
+    return body.decode("utf-8") if isinstance(body, (bytes, bytearray)) else str(body)
+
+
+def _event_signature(properties):
+    if properties and getattr(properties, "headers", None):
+        return properties.headers.get("signature")
+    return None
+
+
+def _event_data(body):
+    body_str = _body_as_string(body)
+    try:
+        return ast.literal_eval(body_str)
+    except (ValueError, SyntaxError):
+        return json.loads(body_str)
+
+
+def _event_id(body):
+    data = _event_data(body)
+    return data.get("id") if isinstance(data, dict) else data
+
+
+def normalizar_pedido_id(pedido_id):
+    if isinstance(pedido_id, str):
+        pedido_id = pedido_id.strip()
+        if pedido_id.isdigit():
+            return int(pedido_id)
+        return pedido_id
+    return int(pedido_id) if isinstance(pedido_id, (int, float)) and not isinstance(pedido_id, bool) else pedido_id
+
+
+def _find_pedido(pedido_id):
+    pedido_id = normalizar_pedido_id(pedido_id)
+    return next((p for p in pedidos if p["id"] == pedido_id), None)
 
 class MenuInterativo:
     def __init__(self):
@@ -128,7 +162,7 @@ class MenuInterativo:
         self.consumer_channel.queue_bind(
             exchange=EXCHANGE_ECOMMERCE_NAME,
             queue=queue_pedidos_enviados,
-            routing_key="pedido.criado",
+            routing_key="pedido.enviado",
         )
         self.consumer_channel.basic_consume(
             queue=queue_pedidos_enviados,
@@ -205,12 +239,68 @@ class MenuInterativo:
 
     def visualizar_produtos(self):
         print("\n=== Lista de Produtos ===")
-        for produto in produtos:
+        produtos_estoque = self.consultar_estoque()
+        if produtos_estoque is None:
+            input("\nNão foi possível consultar o serviço de estoque. Pressione [ENTER].")
+            return
+
+        for produto in produtos_estoque:
             print(
                 f"ID: {produto['id']}, Nome: {produto['nome']}, Categoria: {produto['categoria']}, Estoque: {produto['estoque']}"
             )
 
         input("\nPressione [ENTER] para voltar ao menu principal.")
+
+    def consultar_estoque(self):
+        connection = pika.BlockingConnection(
+            pika.ConnectionParameters(host="localhost")
+        )
+        channel = connection.channel()
+        init_ecommerce_exchange(channel)
+
+        callback_queue = channel.queue_declare(queue="", exclusive=True).method.queue
+        correlation_id = str(uuid.uuid4())
+        channel.queue_bind(
+            exchange=EXCHANGE_ECOMMERCE_NAME,
+            queue=callback_queue,
+            routing_key="estoque.resposta",
+        )
+        body_out = "{}"
+        signature_out = assinar_mensagem(body_out, PRIVATE_KEY_FILE)
+        channel.basic_publish(
+            exchange=EXCHANGE_ECOMMERCE_NAME,
+            routing_key="estoque.consulta",
+            body=body_out,
+            properties=pika.BasicProperties(
+                reply_to=callback_queue,
+                correlation_id=correlation_id,
+                headers={"signature": signature_out},
+            ),
+        )
+
+        resposta = None
+        for method, properties, body in channel.consume(
+            callback_queue, inactivity_timeout=5, auto_ack=True
+        ):
+            if method is None:
+                break
+            if properties.correlation_id != correlation_id:
+                continue
+
+            body_str = _body_as_string(body)
+            signature = _event_signature(properties)
+            if signature is None or not verificar_assinatura(
+                body_str, signature, ESTOQUE_PUBLIC_KEY_FILE
+            ):
+                print("Assinatura inválida na resposta do estoque.")
+                break
+
+            resposta = _event_data(body)
+            break
+
+        channel.cancel()
+        connection.close()
+        return resposta.get("produtos", []) if resposta else None
 
     def realizar_pedidos(self):
         print("\n=== Realizar Pedido ===")
@@ -220,18 +310,22 @@ class MenuInterativo:
         ids_produtos = input().split(",")
         produtos_selecionados = []
         for id_produto in ids_produtos:
-            produto = next(
-                (p for p in produtos if str(p["id"]) == id_produto.strip()), None
+            id_produto = id_produto.strip()
+            if not id_produto:
+                continue
+
+            try:
+                id_produto = int(id_produto)
+            except ValueError:
+                print(f"ID de produto inválido: {id_produto}.")
+                continue
+
+            quantidade = int(
+                input(f"Digite a quantidade para o produto {id_produto}: ")
             )
-            if produto:
-                quantidade = int(
-                    input(f"Digite a quantidade para o produto {produto['nome']}: ")
-                )
-                produtos_selecionados.append(
-                    {"id": produto["id"], "quantidade": quantidade}
-                )
-            else:
-                print(f"Produto com ID {id_produto.strip()} não encontrado.")
+            produtos_selecionados.append(
+                {"id": id_produto, "quantidade": quantidade}
+            )
 
         if produtos_selecionados:
             print("\nProdutos selecionados:")
@@ -243,6 +337,11 @@ class MenuInterativo:
                     print(
                         f"- {produto_info['nome']} (Quantidade: {produto['quantidade']})"
                     )
+                else:
+                    print(
+                        f"- ID {produto['id']} (produto será validado pelo estoque; "
+                        f"quantidade: {produto['quantidade']})"
+                    )
 
         # Cria um novo pedido com ID incremental
         novo_id_pedido = max([p["id"] for p in pedidos], default=0) + 1
@@ -250,7 +349,8 @@ class MenuInterativo:
             "id": novo_id_pedido,
             "produtos": produtos_selecionados,
             "estoque": None,
-            "pagamento": None,
+            "pagamento": "não realizado",
+            "envio": "não enviado"
         }
 
         body_str = str(novo_pedido)
@@ -270,19 +370,14 @@ class MenuInterativo:
         print("\nDigite o ID do pedido que deseja excluir:")
         id_pedido = input()
 
-        try:
-            id_val = int(id_pedido)
-        except ValueError:
-            id_val = id_pedido
+        id_val = normalizar_pedido_id(id_pedido)
 
         payload = {"id": id_val}
         body_str = str(payload)
         signature = assinar_mensagem(body_str, PRIVATE_KEY_FILE)
-        # Encontra o pedido com o ID informado
-        pedido = next((p for p in pedidos if p["id"] == id_pedido), None)
+        pedido = _find_pedido(id_val)
         if pedido:
             pedidos.remove(pedido)
-            # Publica o evento de exclusão do pedido no RabbitMQ (body string + signature header)
             self.channel.basic_publish(
                 exchange=EXCHANGE_ECOMMERCE_NAME,
                 routing_key="pedido.excluido",
@@ -290,9 +385,9 @@ class MenuInterativo:
                 properties=pika.BasicProperties(headers={"signature": signature}),
             )
 
-            print(f"Pedido {id_pedido} excluído com sucesso.")
+            print(f"Pedido {id_val} excluído com sucesso.")
         else:
-            print(f"Pedido {id_pedido} não encontrado.")
+            print(f"Pedido {id_val} não encontrado.")
 
         input("\nPressione [ENTER] para voltar ao menu principal.")
 
@@ -311,53 +406,73 @@ class MenuInterativo:
                     )
             print(f"Status do Estoque: {pedido['estoque']}")
             print(f"Status do Pagamento: {pedido['pagamento']}")
+            print(f"Status do Envio: {pedido['envio']}")
             print("------------------------")
 
         input("\nPressione [ENTER] para voltar ao menu principal.")
 
     def processa_pagamento_aprovado(self, ch, method, properties, body):
-        print(f"\nPagamento aprovado: {body.decode()}")
+        body_str = _body_as_string(body)
+        signature = _event_signature(properties)
+        if signature is None or not verificar_assinatura(
+            body_str, signature, PAGAMENTO_PUBLIC_KEY_FILE
+        ):
+            print("Assinatura inválida no evento pagamento.aprovado")
+            return
 
-        # Atualiza o status do pagamento do pedido
-        id_pedido = body.decode()
-        pedido = next((p for p in pedidos if p["id"] == id_pedido), None)
+        id_pedido = _event_id(body)
+        print(f"\nPagamento aprovado: {id_pedido}")
+        pedido = _find_pedido(id_pedido)
         if pedido:
             pedido["pagamento"] = "aprovado"
 
     def processa_pagamento_recusado(self, ch, method, properties, body):
-        print(f"\nPagamento recusado: {body.decode()}")
+        body_str = _body_as_string(body)
+        signature = _event_signature(properties)
+        if signature is None or not verificar_assinatura(
+            body_str, signature, PAGAMENTO_PUBLIC_KEY_FILE
+        ):
+            print("Assinatura inválida no evento pagamento.recusado")
+            return
 
-        # Atualiza o status do pagamento do pedido
-        id_pedido = body.decode()
-        pedido = next((p for p in pedidos if p["id"] == id_pedido), None)
+        id_pedido = _event_id(body)
+        print(f"\nPagamento recusado: {id_pedido}")
+        pedido = _find_pedido(id_pedido)
         if pedido:
             pedido["pagamento"] = "recusado"
-            # Publica o evento de exclusão do pedido no RabbitMQ
+            payload = {"id": id_pedido}
+            body_out = str(payload)
+            signature_out = assinar_mensagem(body_out, PRIVATE_KEY_FILE)
             self.consumer_channel.basic_publish(
                 exchange=EXCHANGE_ECOMMERCE_NAME,
                 routing_key="pedido.excluido",
-                body=str(id_pedido),
+                body=body_out,
+                properties=pika.BasicProperties(headers={"signature": signature_out}),
             )
 
     def processa_pedido_enviado(self, ch, method, properties, body):
-        print(f"\nPedido enviado: {body.decode()}")
+        body_str = _body_as_string(body)
+        signature = _event_signature(properties)
+        if signature is None or not verificar_assinatura(
+            body_str, signature, ENTREGA_PUBLIC_KEY_FILE
+        ):
+            print("Assinatura inválida no evento pedido.enviado")
+            return
 
-        # Atualiza o status do pedido
-        id_pedido = body.decode()
-        pedido = next((p for p in pedidos if p["id"] == id_pedido), None)
+        id_pedido = _event_id(body)
+        print(f"\nPedido enviado: {id_pedido}")
+        pedido = _find_pedido(id_pedido)
         if pedido:
-            pedido["status"] = "enviado"
+            pedido["envio"] = "enviado"
 
     def processa_pedido_estoque_ok(self, ch, method, properties, body):
-        # LEMBRAR DE DAR BAIXA NO ESTOQUE
         body_str = body.decode("utf-8") if isinstance(body, (bytes, bytearray)) else str(body)
 
         signature = None
         if properties and getattr(properties, "headers", None):
             signature = properties.headers.get("signature")
 
-        estoque_pub = SRC_FOLDER / "estoque" / "estoque_public.pem"
-        if signature is None or not verificar_assinatura(body_str, signature, estoque_pub):
+        if signature is None or not verificar_assinatura(body_str, signature, ESTOQUE_PUBLIC_KEY_FILE):
             print("Assinatura inválida no evento pedido.estoque_ok")
             return
 
@@ -379,8 +494,7 @@ class MenuInterativo:
         if properties and getattr(properties, "headers", None):
             signature = properties.headers.get("signature")
 
-        estoque_pub = SRC_FOLDER / "estoque" / "estoque_public.pem"
-        if signature is None or not verificar_assinatura(body_str, signature, estoque_pub):
+        if signature is None or not verificar_assinatura(body_str, signature, ESTOQUE_PUBLIC_KEY_FILE):
             print("Assinatura inválida no evento estoque.indisponivel")
             return
 

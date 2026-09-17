@@ -8,9 +8,8 @@
 
 import pika
 from helpers.helper import (
-    create_cryptography_keys,
-    init_promocoes_exchange,
     EXCHANGE_PROMOCOES_NAME,
+    init_promocoes_exchange,
     verificar_assinatura,
 )
 import os
@@ -20,11 +19,7 @@ from Crypto.PublicKey import RSA
 
 FILE_FOLDER_PATH = Path(__file__).resolve().parents[0]
 
-PRIVATE_KEY_FILE = FILE_FOLDER_PATH / "consumidores_promocoes_private.pem"
-PUBLIC_KEY_FILE = FILE_FOLDER_PATH / "consumidores_promocoes_public.pem"
-PROMOCOES_PUBLIC_KEY_FILE = (
-    FILE_FOLDER_PATH.parent.parent / "promocoes" / "promocoes_public.pem"
-)
+PROMOCOES_PUBLIC_KEY_FILE = FILE_FOLDER_PATH.parent / "promocoes" / "promocoes_public.pem"
 
 
 def callback_consumidores(ch, method, properties, body):
@@ -60,8 +55,6 @@ def main():
     channel = connection.channel()
 
     init_promocoes_exchange(channel)
-
-    private_key = create_cryptography_keys(PRIVATE_KEY_FILE, PUBLIC_KEY_FILE)
 
     # Consumidor C1: Interesse nas categorias A e B
     queue_name_c1 = "consumidor_c1"

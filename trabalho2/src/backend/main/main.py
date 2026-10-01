@@ -39,6 +39,7 @@ from helpers.helper import (
     init_ecommerce_exchange,
 )
 
+
 class PedidoItem(BaseModel):
     id: int
     nome: str
@@ -49,6 +50,7 @@ class PedidoItem(BaseModel):
 class Pedido(BaseModel):
     pedidos: list[PedidoItem]
 
+
 class Produto(BaseModel):
     id: int
     nome: str
@@ -56,6 +58,14 @@ class Produto(BaseModel):
     estoque: int
 
 
+pedidos = []
+
+
+connection = pika.BlockingConnection(
+    pika.ConnectionParameters(host="localhost")
+)
+channel = connection.channel()
+init_ecommerce_exchange(channel)
 
 
 app = FastAPI()
@@ -81,12 +91,31 @@ async def listar_produtos():
 @app.post("/pedido")
 async def criar_pedido(pedido: Pedido):
 
-    for pedido in pedido.pedidos:
-        print(
-            f"Pedido criado: {pedido.id}, Nome: {pedido.nome}, Categoria: {pedido.categoria}"
+    pedido_aprovado = False
+
+    for item in pedido.pedidos:
+        # Make request to the Estoque microservice to check stock availability
+
+        pedido_aprovado = True
+        pass
+
+    if pedido_aprovado:
+        # Publish the pedido.criado event to RabbitMQ
+        novo_id_pedido = max([p["id"] for p in pedidos], default=0) + 1
+        novo_pedido = {
+            "id": novo_id_pedido,
+            "produtos": [item.model_dump() for item in pedido.pedidos],
+            "estoque": "disponível",
+        }
+        pedidos.append(novo_pedido)
+
+        channel.basic_publish(
+            exchange=EXCHANGE_ECOMMERCE_NAME,
+            routing_key="pedido.criado",
+            body=str(novo_pedido),
         )
 
-    return {"message": "Pedido criado com sucesso."}
+        return {"message": "Pedido criado com sucesso."}
 
 
 @app.post("/interesse")

@@ -29,10 +29,7 @@ import pika
 from helpers.helper import (
     EXCHANGE_ECOMMERCE_NAME,
     init_ecommerce_exchange,
-    assinar_mensagem,
-    verificar_assinatura,
 )
-
 
 produtos = [
     {"id": 1, "nome": "Produto A", "categoria": "A", "estoque": 5},
@@ -98,7 +95,11 @@ def processar_pedido(pedido):
         produto_id = item.get("id") if isinstance(item, dict) else item
         quantidade = item.get("quantidade", 1) if isinstance(item, dict) else 1
 
-        if not isinstance(quantidade, int) or isinstance(quantidade, bool) or quantidade < 1:
+        if (
+            not isinstance(quantidade, int)
+            or isinstance(quantidade, bool)
+            or quantidade < 1
+        ):
             return {
                 "id": pedido_id,
                 "status": "indisponivel",
@@ -155,57 +156,6 @@ def processar_exclusao(pedido_id):
         "status": "pedido_cancelado",
         "mensagem": "Produtos devolvidos ao estoque.",
     }
-
-
-def receber_mensagem(ch, method, properties, body):
-    mensagem = _parse_mensagem(body)
-    routing_key = method.routing_key
-
-    if routing_key == "pedido.criado":
-        # verify signature from producer (main) using its public key
-        body_str = body.decode("utf-8") if isinstance(body, (bytes, bytearray)) else str(body)
-        signature_in = None
-        if properties and getattr(properties, "headers", None):
-            signature_in = properties.headers.get("signature")
-
-        if signature_in is None or not verificar_assinatura(body_str, signature_in, PRINCIPAL_PUBLIC_KEY_FILE):
-            print(f"[ESTOQUE] Assinatura inválida no pedido.criado: {mensagem}")
-            ch.basic_ack(delivery_tag=method.delivery_tag)
-            return
-
-        resultado = processar_pedido(mensagem)
-        pedido_id = resultado["id"]
-
-        # publish as plain string and put signature in header
-        payload = {"id": pedido_id}
-        body_out = str(payload)
-        signature_out = assinar_mensagem(body_out, PRIVATE_KEY_FILE)
-
-        if resultado["status"] == "estoque_ok":
-            ch.basic_publish(
-                exchange=EXCHANGE_ECOMMERCE_NAME,
-                routing_key="pedido.estoque_ok",
-                body=body_out,
-                properties=pika.BasicProperties(headers={"signature": signature_out}),
-            )
-            print(f"[ESTOQUE] Pedido {pedido_id} passou pela validação do estoque.")
-        else:
-            ch.basic_publish(
-                exchange=EXCHANGE_ECOMMERCE_NAME,
-                routing_key="estoque.indisponivel",
-                body=body_out,
-                properties=pika.BasicProperties(headers={"signature": signature_out}),
-            )
-            print(f"[ESTOQUE] Pedido {pedido_id} indisponível: {resultado['mensagem']}")
-
-    elif routing_key == "pedido.excluido":
-        body_str = body.decode("utf-8") if isinstance(body, (bytes, bytearray)) else str(body)
-
-        pedido_id = _obter_id_pedido(mensagem)
-        resultado = processar_exclusao(pedido_id)
-        print(f"[ESTOQUE] Pedido {resultado['id']} cancelado e devolvido ao estoque.")
-
-    ch.basic_ack(delivery_tag=method.delivery_tag)
 
 
 if __name__ == "__main__":

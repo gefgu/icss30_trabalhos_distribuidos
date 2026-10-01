@@ -1,3 +1,11 @@
+# Consome pedido.criado e pedido.excluido.
+# • Verifica a disponibilidade dos produtos, realiza a reserva/baixa e
+# publica pedido.estoque_ok ou estoque.indisponivel.
+# • (0,1) Persiste os dados dos produtos em estoque.
+# • (0,1) Expõe um endpoint para o MS Gateway consultar produtos
+# disponíveis.
+
+
 # O Microsserviço Estoque é responsável pelo gerenciamento do estoque dos produtos.
 # O serviço deverá consumir os eventos:
 # • pedido.criado;
@@ -17,14 +25,12 @@
 import ast
 import json
 import pika
-from pathlib import Path
 
 from helpers.helper import (
     EXCHANGE_ECOMMERCE_NAME,
     init_ecommerce_exchange,
     assinar_mensagem,
     verificar_assinatura,
-    create_cryptography_keys,
 )
 
 
@@ -36,14 +42,6 @@ produtos = [
 ]
 
 reservas = {}
-
-FILE_FOLDER_PATH = Path(__file__).resolve().parents[0]
-
-PRIVATE_KEY_FILE = FILE_FOLDER_PATH / "estoque_private.pem"
-PUBLIC_KEY_FILE = FILE_FOLDER_PATH / "estoque_public.pem"
-PRINCIPAL_PUBLIC_KEY_FILE = FILE_FOLDER_PATH.parent / "main" / "principal_public.pem"
-PAGAMENTO_PUBLIC_KEY_FILE = FILE_FOLDER_PATH.parent / "pagamento" / "pagamento_public.pem"
-ENTREGA_PUBLIC_KEY_FILE = FILE_FOLDER_PATH.parent / "entrega" / "entrega_public.pem"
 
 
 def _parse_mensagem(body):
@@ -202,14 +200,6 @@ def receber_mensagem(ch, method, properties, body):
 
     elif routing_key == "pedido.excluido":
         body_str = body.decode("utf-8") if isinstance(body, (bytes, bytearray)) else str(body)
-        signature_in = None
-        if properties and getattr(properties, "headers", None):
-            signature_in = properties.headers.get("signature")
-
-        if signature_in is None or not verificar_assinatura(body_str, signature_in, PRINCIPAL_PUBLIC_KEY_FILE):
-            print(f"[ESTOQUE] Assinatura inválida no pedido.excluido: {mensagem}")
-            ch.basic_ack(delivery_tag=method.delivery_tag)
-            return
 
         pedido_id = _obter_id_pedido(mensagem)
         resultado = processar_exclusao(pedido_id)
@@ -223,8 +213,6 @@ if __name__ == "__main__":
     channel = connection.channel()
 
     init_ecommerce_exchange(channel)
-
-    create_cryptography_keys(PRIVATE_KEY_FILE, PUBLIC_KEY_FILE)
 
     queue_name = "estoque"
     channel.queue_declare(queue=queue_name, durable=True)

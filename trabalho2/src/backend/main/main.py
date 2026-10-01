@@ -39,11 +39,23 @@ from helpers.helper import (
     init_ecommerce_exchange,
 )
 
+class PedidoItem(BaseModel):
+    id: int
+    nome: str
+    categoria: str
+    quantidade: int
+
 
 class Pedido(BaseModel):
-    id: str
-    nome: str | None = None
-    categoria: str | None = None
+    pedidos: list[PedidoItem]
+
+class Produto(BaseModel):
+    id: int
+    nome: str
+    categoria: str
+    estoque: int
+
+
 
 
 app = FastAPI()
@@ -68,9 +80,11 @@ async def listar_produtos():
 
 @app.post("/pedido")
 async def criar_pedido(pedido: Pedido):
-    print(
-        f"Pedido criado: {pedido.id}, Nome: {pedido.nome}, Categoria: {pedido.categoria}"
-    )
+
+    for pedido in pedido.pedidos:
+        print(
+            f"Pedido criado: {pedido.id}, Nome: {pedido.nome}, Categoria: {pedido.categoria}"
+        )
 
     return {"message": "Pedido criado com sucesso."}
 

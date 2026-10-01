@@ -1,2 +1,4 @@
 pika==1.4.4
 pycryptodome
+fastapi
+uvicorn

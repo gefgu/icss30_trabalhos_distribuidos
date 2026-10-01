@@ -90,32 +90,20 @@ async def listar_produtos():
 
 @app.post("/pedido")
 async def criar_pedido(pedido: Pedido):
+    novo_id_pedido = max([p["id"] for p in pedidos], default=0) + 1
+    novo_pedido = {
+        "id": novo_id_pedido,
+        "produtos": [item.model_dump() for item in pedido.pedidos],
+    }
+    pedidos.append(novo_pedido)
 
-    pedido_aprovado = False
+    channel.basic_publish(
+        exchange=EXCHANGE_ECOMMERCE_NAME,
+        routing_key="pedido.criado",
+        body=str(novo_pedido),
+    )
 
-    for item in pedido.pedidos:
-        # Make request to the Estoque microservice to check stock availability
-
-        pedido_aprovado = True
-        pass
-
-    if pedido_aprovado:
-        # Publish the pedido.criado event to RabbitMQ
-        novo_id_pedido = max([p["id"] for p in pedidos], default=0) + 1
-        novo_pedido = {
-            "id": novo_id_pedido,
-            "produtos": [item.model_dump() for item in pedido.pedidos],
-            "estoque": "disponível",
-        }
-        pedidos.append(novo_pedido)
-
-        channel.basic_publish(
-            exchange=EXCHANGE_ECOMMERCE_NAME,
-            routing_key="pedido.criado",
-            body=str(novo_pedido),
-        )
-
-        return {"message": "Pedido criado com sucesso."}
+    return {"message": "Pedido criado com sucesso."}
 
 
 @app.post("/interesse")

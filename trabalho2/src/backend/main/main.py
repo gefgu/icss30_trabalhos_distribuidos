@@ -27,12 +27,34 @@ import threading
 import pika
 
 from fastapi import FastAPI
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from backend.main.consumer import iniciar_consumo
-from helpers.helper import EXCHANGE_ECOMMERCE_NAME, EXCHANGE_ECOMMERCE_NAME, init_ecommerce_exchange
+from helpers.helper import (
+    EXCHANGE_ECOMMERCE_NAME,
+    EXCHANGE_ECOMMERCE_NAME,
+    init_ecommerce_exchange,
+)
+
+
+class Pedido(BaseModel):
+    id: str
+    nome: str | None = None
+    categoria: str | None = None
 
 
 app = FastAPI()
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 @app.get("/")
 async def root():
@@ -45,7 +67,11 @@ async def listar_produtos():
 
 
 @app.post("/pedido")
-async def criar_pedido():
+async def criar_pedido(pedido: Pedido):
+    print(
+        f"Pedido criado: {pedido.id}, Nome: {pedido.nome}, Categoria: {pedido.categoria}"
+    )
+
     return {"message": "Pedido criado com sucesso."}
 
 
@@ -57,9 +83,6 @@ async def registrar_interesse():
 @app.delete("/interesse")
 async def cancelar_interesse():
     return {"message": "Interesse cancelado com sucesso."}
-
-
-
 
 
 def main():

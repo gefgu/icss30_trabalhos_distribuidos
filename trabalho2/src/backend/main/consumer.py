@@ -9,9 +9,6 @@ import sys
 import threading
 import pika
 
-from fastapi import FastAPI
-
-from backend.main.consumer import iniciar_consumo
 from helpers.helper import EXCHANGE_ECOMMERCE_NAME, EXCHANGE_ECOMMERCE_NAME, init_ecommerce_exchange
 
 

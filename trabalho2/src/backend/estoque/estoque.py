@@ -158,6 +158,42 @@ def processar_exclusao(pedido_id):
     }
 
 
+def receber_mensagem(ch, method, properties, body):
+    mensagem = _parse_mensagem(body)
+    routing_key = method.routing_key
+
+    if routing_key == "pedido.criado":
+        # verify signature from producer (main) using its public key
+        resultado = processar_pedido(mensagem)
+        pedido_id = resultado["id"]
+
+        # publish as plain string and put signature in header
+        payload = {"id": pedido_id}
+        body_out = str(payload)
+
+        if resultado["status"] == "estoque_ok":
+            ch.basic_publish(
+                exchange=EXCHANGE_ECOMMERCE_NAME,
+                routing_key="pedido.estoque_ok",
+                body=body_out,
+            )
+            print(f"[ESTOQUE] Pedido {pedido_id} passou pela validação do estoque.")
+        else:
+            ch.basic_publish(
+                exchange=EXCHANGE_ECOMMERCE_NAME,
+                routing_key="estoque.indisponivel",
+                body=body_out,
+            )
+            print(f"[ESTOQUE] Pedido {pedido_id} indisponível: {resultado['mensagem']}")
+
+    elif routing_key == "pedido.excluido":
+        pedido_id = _obter_id_pedido(mensagem)
+        resultado = processar_exclusao(pedido_id)
+        print(f"[ESTOQUE] Pedido {resultado['id']} cancelado e devolvido ao estoque.")
+
+    ch.basic_ack(delivery_tag=method.delivery_tag)
+
+
 if __name__ == "__main__":
     connection = pika.BlockingConnection(pika.ConnectionParameters(host="localhost"))
     channel = connection.channel()

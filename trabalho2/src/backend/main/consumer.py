@@ -1,219 +1,68 @@
-# Consumir todos os eventos gerados pelo microsserviços Estoque,
-# Pagamento e Entrega (pedido.estoque_ok, estoque.indisponivel,
-# pagamento.aprovado, pagamento.recusado, pedido.enviado)
+# Consome eventos de Estoque, Pagamento e Entrega e persiste os status dos pedidos.
 
 import ast
 import json
-import os
-import sys
-import threading
+
 import pika
 
-from helpers.helper import EXCHANGE_ECOMMERCE_NAME, EXCHANGE_ECOMMERCE_NAME, init_ecommerce_exchange
+from backend.main import db
+from helpers.helper import EXCHANGE_ECOMMERCE_NAME, init_ecommerce_exchange
 
 
-pedidos = []
+EVENTOS = {
+    "pagamento.aprovado": ("pagamento", "aprovado"),
+    "pagamento.recusado": ("pagamento", "recusado"),
+    "pedido.enviado": ("envio", "enviado"),
+    "pedido.estoque_ok": ("estoque", "ok"),
+    "estoque.indisponivel": ("estoque", "indisponível"),
+}
 
 
-def _body_as_string(body):
-    return body.decode("utf-8") if isinstance(body, (bytes, bytearray)) else str(body)
-
-    
-def _event_signature(properties):
-    if properties and getattr(properties, "headers", None):
-        return properties.headers.get("signature")
-    return None
-
-
-def _event_data(body):
-    body_str = _body_as_string(body)
+def processar_evento(ch, method, properties, body):
+    conteudo = body.decode("utf-8") if isinstance(body, bytes) else str(body)
     try:
-        return ast.literal_eval(body_str)
-    except (ValueError, SyntaxError):
-        return json.loads(body_str)
+        evento = json.loads(conteudo)
+    except json.JSONDecodeError:
+        evento = ast.literal_eval(conteudo)  # Compatibilidade com mensagens antigas.
 
+    id_pedido = evento.get("id") if isinstance(evento, dict) else evento
+    status = EVENTOS.get(method.routing_key)
+    if status and db.buscar_pedido(id_pedido):
+        campo, valor = status
+        db.atualizar_pedido(id_pedido, campo, valor)
+        print(f"Pedido {id_pedido}: {campo} = {valor}")
 
-def _event_id(body):
-    data = _event_data(body)
-    return data.get("id") if isinstance(data, dict) else data
-
-
-def normalizar_pedido_id(pedido_id):
-    if isinstance(pedido_id, str):
-        pedido_id = pedido_id.strip()
-        if pedido_id.isdigit():
-            return int(pedido_id)
-        return pedido_id
-    return int(pedido_id) if isinstance(pedido_id, (int, float)) and not isinstance(pedido_id, bool) else pedido_id
-
-
-def _find_pedido(pedido_id):
-    pedido_id = normalizar_pedido_id(pedido_id)
-    return next((p for p in pedidos if p["id"] == pedido_id), None)
-
-def processa_pagamento_aprovado(self, ch, method, properties, body):
-    body_str = _body_as_string(body)
-
-    id_pedido = _event_id(body)
-    print(f"\nPagamento aprovado: {id_pedido}")
-    pedido = _find_pedido(id_pedido)
-    if pedido:
-        pedido["pagamento"] = "aprovado"
-
-def processa_pagamento_recusado(self, ch, method, properties, body):
-    body_str = _body_as_string(body)
-    signature = _event_signature(properties)
-
-    id_pedido = _event_id(body)
-    print(f"\nPagamento recusado: {id_pedido}")
-    pedido = _find_pedido(id_pedido)
-    if pedido:
-        pedido["pagamento"] = "recusado"
-        payload = {"id": id_pedido}
-        body_out = str(payload)
-        self.consumer_channel.basic_publish(
-            exchange=EXCHANGE_ECOMMERCE_NAME,
-            routing_key="pedido.excluido",
-            body=body_out,
-        )
-
-def processa_pedido_enviado(self, ch, method, properties, body):
-    id_pedido = _event_id(body)
-    print(f"\nPedido enviado: {id_pedido}")
-    pedido = _find_pedido(id_pedido)
-    if pedido:
-        pedido["envio"] = "enviado"
-
-def processa_pedido_estoque_ok(self, ch, method, properties, body):
-    body_str = body.decode("utf-8") if isinstance(body, (bytes, bytearray)) else str(body)
-
-    try:
-        body_dict = ast.literal_eval(body_str)
-    except Exception:
-        body_dict = json.loads(body_str)
-
-    id_pedido = body_dict.get("id")
-
-    pedido = next((p for p in pedidos if p["id"] == id_pedido), None)
-    if pedido:
-        pedido["estoque"] = "ok"
-
-def processa_estoque_indisponivel(self, ch, method, properties, body):
-    body_str = body.decode("utf-8") if isinstance(body, (bytes, bytearray)) else str(body)
-
-    try:
-        body_dict = ast.literal_eval(body_str)
-    except Exception:
-        body_dict = json.loads(body_str)
-
-    id_pedido = body_dict.get("id")
-    pedido = next((p for p in pedidos if p["id"] == id_pedido), None)
-    if pedido:
-        pedido["estoque"] = "indisponível"
-        payload = {"id": id_pedido}
-        body_out = str(payload)
-        self.consumer_channel.basic_publish(
-            exchange=EXCHANGE_ECOMMERCE_NAME,
-            routing_key="pedido.excluido",
-            body=body_out,
-        )
+        if method.routing_key in {"pagamento.recusado", "estoque.indisponivel"}:
+            ch.basic_publish(
+                exchange=EXCHANGE_ECOMMERCE_NAME,
+                routing_key="pedido.excluido",
+                body=json.dumps({"id": id_pedido}),
+            )
 
 
 def iniciar_consumo():
-    connection = pika.BlockingConnection(
-            pika.ConnectionParameters(host="localhost")
+    connection = pika.BlockingConnection(pika.ConnectionParameters(host="localhost"))
+    channel = connection.channel()
+    init_ecommerce_exchange(channel)
+
+    filas = {
+        "pagamento_aprovado": "pagamento.aprovado",
+        "pagamento_recusado": "pagamento.recusado",
+        "pedidos_enviados": "pedido.enviado",
+        "pedidos_estoque_ok": "pedido.estoque_ok",
+        "estoque_indisponivel": "estoque.indisponivel",
+    }
+    for fila, routing_key in filas.items():
+        channel.queue_declare(queue=fila, durable=True)
+        channel.queue_bind(
+            exchange=EXCHANGE_ECOMMERCE_NAME,
+            queue=fila,
+            routing_key=routing_key,
         )
-    consumer_channel = connection.channel()
-    init_ecommerce_exchange(consumer_channel)
+        channel.basic_consume(
+            queue=fila,
+            on_message_callback=processar_evento,
+            auto_ack=True,
+        )
 
-    queue_pagamento_aprovado = "pagamento_aprovado"
-    consumer_channel.queue_declare(
-        queue=queue_pagamento_aprovado,
-        durable=True,
-        exclusive=False,
-        auto_delete=False,
-    )
-    consumer_channel.queue_bind(
-        exchange=EXCHANGE_ECOMMERCE_NAME,
-        queue=queue_pagamento_aprovado,
-        routing_key="pagamento.aprovado",
-    )
-    consumer_channel.basic_consume(
-        queue=queue_pagamento_aprovado,
-        on_message_callback=processa_pagamento_aprovado,
-        auto_ack=True,
-    )
-
-    queue_pagamento_recusado = "pagamento_recusado"
-    consumer_channel.queue_declare(
-        queue=queue_pagamento_recusado,
-        durable=True,
-        exclusive=False,
-        auto_delete=False,
-    )
-    consumer_channel.queue_bind(
-        exchange=EXCHANGE_ECOMMERCE_NAME,
-        queue=queue_pagamento_recusado,
-        routing_key="pagamento.recusado",
-    )
-    consumer_channel.basic_consume(
-        queue=queue_pagamento_recusado,
-        on_message_callback=processa_pagamento_recusado,
-        auto_ack=True,
-    )
-
-    queue_pedidos_enviados = "pedidos_enviados"
-    consumer_channel.queue_declare(
-        queue=queue_pedidos_enviados,
-        durable=True,
-        exclusive=False,
-        auto_delete=False,
-    )
-    consumer_channel.queue_bind(
-        exchange=EXCHANGE_ECOMMERCE_NAME,
-        queue=queue_pedidos_enviados,
-        routing_key="pedido.enviado",
-    )
-    consumer_channel.basic_consume(
-        queue=queue_pedidos_enviados,
-        on_message_callback=processa_pedido_enviado,
-        auto_ack=True,
-    )
-
-    queue_pedidos_estoque_ok = "pedidos_estoque_ok"
-    consumer_channel.queue_declare(
-        queue=queue_pedidos_estoque_ok,
-        durable=True,
-        exclusive=False,
-        auto_delete=False,
-    )
-    consumer_channel.queue_bind(
-        exchange=EXCHANGE_ECOMMERCE_NAME,
-        queue=queue_pedidos_estoque_ok,
-        routing_key="pedido.estoque_ok",
-    )
-    consumer_channel.basic_consume(
-        queue=queue_pedidos_estoque_ok,
-        on_message_callback=processa_pedido_estoque_ok,
-        auto_ack=True,
-    )
-
-    queue_estoque_indisponivel = "estoque_indisponivel"
-    consumer_channel.queue_declare(
-        queue=queue_estoque_indisponivel,
-        durable=True,
-        exclusive=False,
-        auto_delete=False,
-    )
-    consumer_channel.queue_bind(
-        exchange=EXCHANGE_ECOMMERCE_NAME,
-        queue=queue_estoque_indisponivel,
-        routing_key="estoque.indisponivel",
-    )
-    consumer_channel.basic_consume(
-        queue=queue_estoque_indisponivel,
-        on_message_callback=processa_estoque_indisponivel,
-        auto_ack=True,
-    )
-
-    consumer_channel.start_consuming()
+    channel.start_consuming()

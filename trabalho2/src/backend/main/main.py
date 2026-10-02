@@ -33,6 +33,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from backend.main.consumer import iniciar_consumo
+from backend.main.db import criar_pedido as salvar_pedido, inicializar_banco
 from helpers.helper import (
     EXCHANGE_ECOMMERCE_NAME,
     EXCHANGE_ECOMMERCE_NAME,
@@ -58,8 +59,7 @@ class Produto(BaseModel):
     estoque: int
 
 
-pedidos = []
-
+inicializar_banco()
 
 connection = pika.BlockingConnection(
     pika.ConnectionParameters(host="localhost")
@@ -90,12 +90,10 @@ async def listar_produtos():
 
 @app.post("/pedido")
 async def criar_pedido(pedido: Pedido):
-    novo_id_pedido = max([p["id"] for p in pedidos], default=0) + 1
     novo_pedido = {
-        "id": novo_id_pedido,
         "produtos": [item.model_dump() for item in pedido.pedidos],
     }
-    pedidos.append(novo_pedido)
+    novo_pedido["id"] = salvar_pedido(novo_pedido)
 
     channel.basic_publish(
         exchange=EXCHANGE_ECOMMERCE_NAME,

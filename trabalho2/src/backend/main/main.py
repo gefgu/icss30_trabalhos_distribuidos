@@ -127,7 +127,10 @@ async def criar_pedido(pedido: Pedido):
         body=str(novo_pedido),
     )
 
-    return {"message": "Pedido criado com sucesso."}
+    return {
+        "message": "Pedido criado com sucesso.",
+        "id": novo_pedido["id"],
+    }
 
 
 @app.post("/interesse")

@@ -30,7 +30,11 @@ from fastapi import FastAPI
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.sse import EventSourceResponse
+import asyncio
+import json
 from pydantic import BaseModel
+from contextlib import asynccontextmanager
 
 from backend.main.consumer import iniciar_consumo
 from backend.main.db import criar_pedido as salvar_pedido, inicializar_banco
@@ -61,14 +65,36 @@ class Produto(BaseModel):
 
 inicializar_banco()
 
-connection = pika.BlockingConnection(
-    pika.ConnectionParameters(host="localhost")
-)
+loop = None
+listeners = {}
+
+connection = pika.BlockingConnection(pika.ConnectionParameters(host="localhost"))
 channel = connection.channel()
 init_ecommerce_exchange(channel)
 
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global loop
+    loop = asyncio.get_running_loop()
+    consumer_thread = threading.Thread(
+        target=iniciar_consumo, args=(notify_sse,), daemon=True
+    )
+    consumer_thread.start()
+    yield
+    print("Interrompendo os consumidores...")
+    try:
+        sys.exit(0)
+    except SystemExit:
+        os._exit(0)
+
+
+app = FastAPI(
+    lifespan=lifespan,
+    title="API Gateway",
+    description="API Gateway do E-commerce",
+    version="1.0.0",
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -114,18 +140,29 @@ async def cancelar_interesse():
     return {"message": "Interesse cancelado com sucesso."}
 
 
-def main():
-    consumer_thread = threading.Thread(target=iniciar_consumo, daemon=True)
+@app.get("/pedidos/{pedido_id}/status")
+async def obter_status_pedido(pedido_id: int):
+    queue = asyncio.Queue()
+    listeners.setdefault(pedido_id, set()).add(queue)
 
-    consumer_thread.start()
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("Interrompendo os consumidores...")
+    async def stream():
         try:
-            sys.exit(0)
-        except SystemExit:
-            os._exit(0)
+            while True:
+                status = await queue.get()
+                yield f"data: {json.dumps(status)}\n\n"
+        finally:
+            queues = listeners.get(pedido_id)
+            if queues is not None:
+                queues.discard(queue)
+            if queues is not None and not queues:
+                del listeners[pedido_id]
+
+    return EventSourceResponse(stream(), media_type="text/event-stream")
+
+
+def notify_sse(pedido_id, status):
+    def send():
+        for queue in listeners.get(pedido_id, set()):
+            queue.put_nowait(status)
+
+    loop.call_soon_threadsafe(send)

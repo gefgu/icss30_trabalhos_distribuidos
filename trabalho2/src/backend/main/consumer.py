@@ -8,7 +8,6 @@ import pika
 from backend.main import db
 from helpers.helper import EXCHANGE_ECOMMERCE_NAME, init_ecommerce_exchange
 
-
 EVENTOS = {
     "pagamento.aprovado": ("pagamento", "aprovado"),
     "pagamento.recusado": ("pagamento", "recusado"),
@@ -18,7 +17,7 @@ EVENTOS = {
 }
 
 
-def processar_evento(ch, method, properties, body):
+def processar_evento(ch, method, properties, body, callback=None):
     conteudo = body.decode("utf-8") if isinstance(body, bytes) else str(body)
     try:
         evento = json.loads(conteudo)
@@ -38,9 +37,11 @@ def processar_evento(ch, method, properties, body):
                 routing_key="pedido.excluido",
                 body=json.dumps({"id": id_pedido}),
             )
+        if callback:
+            callback(id_pedido, {"campo": campo, "status": valor})
 
 
-def iniciar_consumo():
+def iniciar_consumo(callback=None):
     connection = pika.BlockingConnection(pika.ConnectionParameters(host="localhost"))
     channel = connection.channel()
     init_ecommerce_exchange(channel)
@@ -61,7 +62,9 @@ def iniciar_consumo():
         )
         channel.basic_consume(
             queue=fila,
-            on_message_callback=processar_evento,
+            on_message_callback=lambda ch, method, properties, body: processar_evento(
+                ch, method, properties, body, callback
+            ),
             auto_ack=True,
         )
 

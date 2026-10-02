@@ -63,6 +63,11 @@ class Produto(BaseModel):
     estoque: int
 
 
+class Interesse(BaseModel):
+    email: str
+    categoria: str  # A, B, C ou *
+
+
 inicializar_banco()
 
 loop = None
@@ -134,12 +139,24 @@ async def criar_pedido(pedido: Pedido):
 
 
 @app.post("/interesse")
-async def registrar_interesse():
+async def registrar_interesse(interesse: Interesse):
+    channel.basic_publish(
+        exchange=EXCHANGE_ECOMMERCE_NAME,
+        routing_key="interesse.promocao",
+        body=str(interesse.model_dump()),
+    )
+
     return {"message": "Interesse registrado com sucesso."}
 
 
 @app.delete("/interesse")
-async def cancelar_interesse():
+async def cancelar_interesse(interesse: Interesse):
+    channel.basic_publish(
+        exchange=EXCHANGE_ECOMMERCE_NAME,
+        routing_key="interesse.cancelado",
+        body=str(interesse.model_dump()),
+    )
+
     return {"message": "Interesse cancelado com sucesso."}
 
 

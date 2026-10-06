@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Loja Distribuída</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topo">
+    <h1>Loja Distribuída</h1>
+    <p>Escolha os produtos, finalize o pedido e acompanhe cada etapa ao vivo.</p>
+  </header>
+
+  <main class="layout">
+    <!-- Catálogo: GET /produtos -->
+    <section class="catalogo" aria-labelledby="titulo-catalogo">
+      <h2 id="titulo-catalogo">Produtos</h2>
+      <p id="aviso-catalogo" class="aviso" hidden></p>
+      <ul id="lista-produtos" class="produtos"></ul>
+    </section>
+
+    <aside class="lateral">
+      <!-- Carrinho: POST /pedido -->
+      <section class="carrinho" aria-labelledby="titulo-carrinho">
+        <h2 id="titulo-carrinho">Carrinho</h2>
+        <ul id="itens-carrinho" class="itens"></ul>
+        <p id="carrinho-vazio" class="vazio">Adicione um produto para começar.</p>
+        <button id="botao-finalizar" class="botao principal" disabled>Finalizar pedido</button>
+        <p id="msg-carrinho" class="mensagem" role="status"></p>
+      </section>
+
+      <!-- Promoções: POST / DELETE /interesse -->
+      <section class="promocoes" aria-labelledby="titulo-promocoes">
+        <h2 id="titulo-promocoes">Promoções por e-mail</h2>
+        <form id="form-interesse">
+          <label for="email">E-mail</label>
+          <input id="email" type="email" required placeholder="voce@exemplo.com">
+
+          <label for="categoria">Categoria</label>
+          <select id="categoria">
+            <option value="A">Categoria A</option>
+            <option value="B">Categoria B</option>
+            <option value="C">Categoria C</option>
+            <option value="*">Todas as categorias</option>
+          </select>
+
+          <div class="acoes">
+            <button type="submit" class="botao principal">Quero receber</button>
+            <button type="button" id="botao-cancelar" class="botao secundario">Parar de receber</button>
+          </div>
+        </form>
+        <p id="msg-promocoes" class="mensagem" role="status"></p>
+      </section>
+    </aside>
+
+    <!-- Acompanhamento: SSE em /pedidos/{id}/status -->
+    <section class="pedidos" aria-labelledby="titulo-pedidos">
+      <h2 id="titulo-pedidos">Meus pedidos</h2>
+      <p id="sem-pedidos" class="vazio">Seus pedidos aparecem aqui, com o status atualizado em tempo real.</p>
+      <ol id="lista-pedidos" class="lista-pedidos" aria-live="polite"></ol>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

@@ -37,7 +37,7 @@ from pydantic import BaseModel
 from contextlib import asynccontextmanager
 
 from backend.main.consumer import iniciar_consumo
-from backend.main.db import criar_pedido as salvar_pedido, inicializar_banco
+from backend.main.db import criar_pedido as salvar_pedido, inicializar_banco, buscar_pedido
 from helpers.helper import (
     EXCHANGE_ECOMMERCE_NAME,
     EXCHANGE_ECOMMERCE_NAME,
@@ -73,9 +73,23 @@ inicializar_banco()
 loop = None
 listeners = {}
 
-connection = pika.BlockingConnection(pika.ConnectionParameters(host="localhost"))
-channel = connection.channel()
-init_ecommerce_exchange(channel)
+def publicar(routing_key, body):
+    """
+    Abre uma conexão curta com o RabbitMQ, publica e fecha.
+    Uma conexão global parada morre por falta de heartbeat, e o pika
+    não pode ser compartilhado entre threads.
+    """
+    connection = pika.BlockingConnection(pika.ConnectionParameters(host="localhost"))
+    try:
+        channel = connection.channel()
+        init_ecommerce_exchange(channel)
+        channel.basic_publish(
+            exchange=EXCHANGE_ECOMMERCE_NAME,
+            routing_key=routing_key,
+            body=body,
+        )
+    finally:
+        connection.close()
 
 
 @asynccontextmanager
@@ -126,11 +140,7 @@ async def criar_pedido(pedido: Pedido):
     }
     novo_pedido["id"] = salvar_pedido(novo_pedido)
 
-    channel.basic_publish(
-        exchange=EXCHANGE_ECOMMERCE_NAME,
-        routing_key="pedido.criado",
-        body=str(novo_pedido),
-    )
+    publicar("pedido.criado", str(novo_pedido))
 
     return {
         "message": "Pedido criado com sucesso.",
@@ -140,22 +150,14 @@ async def criar_pedido(pedido: Pedido):
 
 @app.post("/interesse")
 async def registrar_interesse(interesse: Interesse):
-    channel.basic_publish(
-        exchange=EXCHANGE_ECOMMERCE_NAME,
-        routing_key="interesse.promocao",
-        body=str(interesse.model_dump()),
-    )
+    publicar("interesse.promocao", str(interesse.model_dump()))
 
     return {"message": "Interesse registrado com sucesso."}
 
 
 @app.delete("/interesse")
 async def cancelar_interesse(interesse: Interesse):
-    channel.basic_publish(
-        exchange=EXCHANGE_ECOMMERCE_NAME,
-        routing_key="interesse.cancelado",
-        body=str(interesse.model_dump()),
-    )
+    publicar("interesse.cancelado", str(interesse.model_dump()))
 
     return {"message": "Interesse cancelado com sucesso."}
 
@@ -167,6 +169,14 @@ async def obter_status_pedido(pedido_id: int):
 
     async def stream():
         try:
+            # Manda o que já aconteceu antes do cliente conectar
+            # (o pedido pode ter avançado antes do frontend abrir o SSE).
+            pedido = buscar_pedido(pedido_id)
+            if pedido:
+                for campo in ("estoque", "pagamento", "envio"):
+                    if pedido[campo] != "pendente":
+                        yield f"data: {json.dumps({'campo': campo, 'status': pedido[campo]})}\n\n"
+
             while True:
                 status = await queue.get()
                 yield f"data: {json.dumps(status)}\n\n"

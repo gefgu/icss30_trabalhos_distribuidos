@@ -38,6 +38,7 @@ from helpers.helper import (
 app = FastAPI()
 
 ARQUIVO_PRODUTOS = Path(__file__).with_name("produtos.json")
+ARQUIVO_RESERVAS = Path(__file__).with_name("reservas.json")
 
 def _carregar_produtos():
     with ARQUIVO_PRODUTOS.open("r", encoding="utf-8") as arquivo:
@@ -57,8 +58,29 @@ def _salvar_produtos():
     arquivo_temporario.replace(ARQUIVO_PRODUTOS)
 
 
+def _carregar_reservas():
+    if not ARQUIVO_RESERVAS.exists():
+        return {}
+
+    with ARQUIVO_RESERVAS.open("r", encoding="utf-8") as arquivo:
+        dados = json.load(arquivo)
+
+    if not isinstance(dados, dict):
+        raise ValueError("reservas.json deve conter um objeto de reservas.")
+    return {int(pedido_id): itens for pedido_id, itens in dados.items()}
+
+
+def _salvar_reservas():
+    arquivo_temporario = ARQUIVO_RESERVAS.with_suffix(".json.tmp")
+    arquivo_temporario.write_text(
+        json.dumps(reservas, ensure_ascii=False, indent=4) + "\n",
+        encoding="utf-8",
+    )
+    arquivo_temporario.replace(ARQUIVO_RESERVAS)
+
+
 produtos = _carregar_produtos()
-reservas = {}
+reservas = _carregar_reservas()
 
 
 def _parse_mensagem(body):
@@ -102,6 +124,14 @@ def processar_pedido(pedido):
     dados = pedido if isinstance(pedido, dict) else _parse_mensagem(pedido)
     pedido_id = _obter_id_pedido(dados)
     itens = dados.get("produtos", []) if isinstance(dados, dict) else []
+
+    # Uma mensagem RabbitMQ pode ser entregue novamente; não reserve duas vezes.
+    if pedido_id in reservas:
+        return {
+            "id": pedido_id,
+            "status": "estoque_ok",
+            "mensagem": "Pedido já reservado anteriormente.",
+        }
 
     if not itens:
         return {
@@ -156,6 +186,7 @@ def processar_pedido(pedido):
 
     reservas[pedido_id] = itens_para_reservar
     _salvar_produtos()
+    _salvar_reservas()
     return {
         "id": pedido_id,
         "status": "estoque_ok",
@@ -174,6 +205,7 @@ def processar_exclusao(pedido_id):
 
     if itens_reservados:
         _salvar_produtos()
+        _salvar_reservas()
 
     return {
         "id": id_pedido,

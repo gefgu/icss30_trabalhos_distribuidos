@@ -5,7 +5,10 @@ import pika
 import uvicorn
 import threading
 from pathlib import Path
+from typing import Literal
 from fastapi import FastAPI
+from fastapi import HTTPException
+from pydantic import BaseModel, ConfigDict, Field
 
 from helpers.helper import (
     EXCHANGE_ECOMMERCE_NAME,
@@ -14,6 +17,13 @@ from helpers.helper import (
 
 FILE_FOLDER_PATH = Path(__file__).resolve().parents[0]
 app = FastAPI()
+
+
+class WebhookPagamento(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    pedido_id: int = Field(gt=0, strict=True)
+    status: Literal["APROVADO", "RECUSADO"]
 
 
 def _parse_mensagem(body):
@@ -71,19 +81,22 @@ def processar_pagamento(pedido):
     return resposta.json()
 
 @app.post("/webhook/pagamento")
-async def receber_webhook(dados: dict):
-    pedido_id = dados["pedido_id"]
-    status = dados["status"]
-
-    publicar_evento(
-        pedido_id,
-        status
-    )
+def receber_webhook(dados: WebhookPagamento):
+    try:
+        publicar_evento(dados.pedido_id, dados.status)
+    except pika.exceptions.AMQPError as erro:
+        raise HTTPException(
+            status_code=503,
+            detail="Não foi possível publicar o resultado do pagamento.",
+        ) from erro
 
     return {"recebido": True}
 
 
 def publicar_evento(pedido_id, status):
+    if status not in {"APROVADO", "RECUSADO"}:
+        raise ValueError("Status de pagamento inválido.")
+
     body = json.dumps({"id": pedido_id})
 
     routing_key = (
@@ -92,11 +105,17 @@ def publicar_evento(pedido_id, status):
         else "pagamento.recusado"
     )
 
-    channel.basic_publish(
-        exchange=EXCHANGE_ECOMMERCE_NAME,
-        routing_key=routing_key,
-        body=body
-    )
+    connection = pika.BlockingConnection(pika.ConnectionParameters(host="localhost"))
+    try:
+        channel_webhook = connection.channel()
+        init_ecommerce_exchange(channel_webhook)
+        channel_webhook.basic_publish(
+            exchange=EXCHANGE_ECOMMERCE_NAME,
+            routing_key=routing_key,
+            body=body,
+        )
+    finally:
+        connection.close()
 
     print(
         f"[PAGAMENTO] Publicado: "

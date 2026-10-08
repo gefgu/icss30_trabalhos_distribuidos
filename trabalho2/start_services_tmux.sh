@@ -5,57 +5,46 @@ set -euo pipefail
 SESSION_NAME="${1:-ecommerce}"
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="$PROJECT_DIR/src"
-SESSION_CREATED=false
-
-cleanup_on_error() {
-    if [[ "$SESSION_CREATED" == true ]]; then
-        tmux kill-session -t "$SESSION_NAME" 2>/dev/null || true
-    fi
-}
-
-trap cleanup_on_error ERR
 
 if ! command -v tmux >/dev/null 2>&1; then
-    echo "tmux não está instalado."
+    echo "tmux não está instalado." >&2
+    exit 1
+fi
+
+if ! command -v uv >/dev/null 2>&1; then
+    echo "uv não está instalado ou não está no PATH." >&2
     exit 1
 fi
 
 if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
-    echo "A sessão '$SESSION_NAME' já existe."
+    echo "A sessão '$SESSION_NAME' já existe. Anexe com: tmux attach -t '$SESSION_NAME'" >&2
     exit 1
 fi
 
-MAIN_PANE=$(tmux new-session -d -P -F '#{pane_id}' -s "$SESSION_NAME" \
-    -n services -c "$SRC_DIR" "exec uv run python -m backend.main.main")
-SESSION_CREATED=true
+start_window() {
+    local window_name="$1"
+    local command="$2"
 
-# Cria a linha inferior antes de dividir a linha superior.
-DELIVERY_PANE=$(tmux split-window -v -l 50% -P -F '#{pane_id}' -t "$MAIN_PANE" \
-    -c "$SRC_DIR" "exec uv run python -m backend.entrega.entrega")
+    if [[ -z "${FIRST_WINDOW:-}" ]]; then
+        FIRST_WINDOW="$(tmux new-session -d -P -F '#{window_id}' -s "$SESSION_NAME" \
+            -n "$window_name" -c "$SRC_DIR" "$command")"
+    else
+        tmux new-window -d -t "$SESSION_NAME" -n "$window_name" -c "$SRC_DIR" "$command" >/dev/null
+    fi
+}
 
-# Linha superior: main ocupa duas das quatro colunas.
-STOCK_PANE=$(tmux split-window -h -l 50% -P -F '#{pane_id}' -t "$MAIN_PANE" \
-    -c "$SRC_DIR" "exec uv run python -m backend.estoque.estoque")
-PAYMENT_PANE=$(tmux split-window -h -l 50% -P -F '#{pane_id}' -t "$STOCK_PANE" \
-    -c "$SRC_DIR" "exec uv run python -m backend.pagamento.pagamento")
+start_window gateway "uv run uvicorn backend.main.main:app --host 127.0.0.1 --port 8000"
+start_window estoque "uv run python -m backend.estoque.estoque"
+start_window pagamento "uv run python -m backend.pagamento.pagamento"
+start_window entrega "uv run python -m backend.entrega.entrega"
+start_window promocoes "uv run python -m backend.promocoes.promocoes"
+start_window mock-pagamento "uv run python -m mock_pagamento.app_pagamento"
+start_window frontend "uv run python -m http.server 8080 --bind 127.0.0.1 --directory frontend"
 
-# Linha inferior: quatro painéis do mesmo tamanho.
-PROMOTIONS_PANE=$(tmux split-window -h -l 75% -P -F '#{pane_id}' -t "$DELIVERY_PANE" \
-    -c "$SRC_DIR" "exec uv run python -m backend.promocoes.promocoes")
-CONSUMER_1_PANE=$(tmux split-window -h -l 66% -P -F '#{pane_id}' -t "$PROMOTIONS_PANE" \
-    -c "$SRC_DIR" "exec uv run python -m backend.consumidores.consumidor_1")
-CONSUMER_2_PANE=$(tmux split-window -h -l 50% -P -F '#{pane_id}' -t "$CONSUMER_1_PANE" \
-    -c "$SRC_DIR" "exec uv run python -m backend.consumidores.consumidor_2")
-
-tmux set-option -t "$SESSION_NAME" pane-border-status top
-tmux set-option -t "$SESSION_NAME" pane-border-format ' #{pane_title} '
-tmux select-pane -t "$MAIN_PANE" -T main
-tmux select-pane -t "$STOCK_PANE" -T estoque
-tmux select-pane -t "$PAYMENT_PANE" -T pagamento
-tmux select-pane -t "$DELIVERY_PANE" -T entrega
-tmux select-pane -t "$PROMOTIONS_PANE" -T promocoes
-tmux select-pane -t "$CONSUMER_1_PANE" -T consumidor_1
-tmux select-pane -t "$CONSUMER_2_PANE" -T consumidor_2
-tmux select-pane -t "$MAIN_PANE"
-trap - ERR
+tmux select-window -t "$SESSION_NAME:gateway"
+echo "Serviços iniciados na sessão tmux '$SESSION_NAME'."
+echo "Frontend: http://127.0.0.1:8080"
+echo "Gateway:  http://127.0.0.1:8000/docs"
+echo "Mock:     http://127.0.0.1:8003"
+echo "Use Ctrl-b seguido de n/p para trocar de serviço; Ctrl-b d para desanexar."
 tmux attach-session -t "$SESSION_NAME"

@@ -25,6 +25,24 @@ DB_PATH = Path(__file__).with_name("promocoes.db")
 QUEUE_NAME = "promocoes"
 
 RESEND_URL = "https://api.resend.com/emails"
+
+
+def carregar_env_local():
+    """Carrega variáveis do .env na raiz sem sobrescrever o ambiente do shell."""
+    arquivo_env = Path(__file__).resolve().parents[3] / ".env"
+    if not arquivo_env.exists():
+        return
+
+    for linha in arquivo_env.read_text(encoding="utf-8").splitlines():
+        linha = linha.strip()
+        if not linha or linha.startswith("#") or "=" not in linha:
+            continue
+        chave, valor = linha.split("=", 1)
+        valor = valor.strip().strip("\"'")
+        os.environ.setdefault(chave.strip(), valor)
+
+
+carregar_env_local()
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 # Sem domínio verificado, o Resend só aceita este remetente de teste
 # e só entrega para o e-mail da própria conta Resend.

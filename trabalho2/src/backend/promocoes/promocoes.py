@@ -118,8 +118,6 @@ def _parse_mensagem(body):
 
 
 def receber_mensagem(ch, method, properties, body):
-    # TODO: verificar a assinatura digital do Gateway aqui quando o
-    # helper com sign/verify voltar.
     try:
         dados = _parse_mensagem(body)
         email = dados["email"].strip().lower()

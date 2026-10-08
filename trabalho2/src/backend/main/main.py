@@ -37,7 +37,12 @@ from pydantic import BaseModel
 from contextlib import asynccontextmanager
 
 from backend.main.consumer import iniciar_consumo
-from backend.main.db import criar_pedido as salvar_pedido, inicializar_banco, buscar_pedido
+from backend.main.db import (
+    criar_pedido as salvar_pedido,
+    inicializar_banco,
+    buscar_pedido,
+    listar_pedidos as buscar_pedidos,
+)
 from helpers.helper import (
     EXCHANGE_ECOMMERCE_NAME,
     EXCHANGE_ECOMMERCE_NAME,
@@ -171,6 +176,14 @@ async def cancelar_interesse(interesse: Interesse):
     publicar("interesse.cancelado", str(interesse.model_dump()))
 
     return {"message": "Interesse cancelado com sucesso."}
+
+
+@app.get("/pedidos")
+async def listar_pedidos():
+    pedidos = buscar_pedidos()
+    for pedido in pedidos:
+        pedido["url_pagamento"] = checkout_urls.get(pedido["id"])
+    return {"pedidos": pedidos}
 
 
 @app.get("/pedidos/{pedido_id}/status")

@@ -304,6 +304,37 @@ function renderizarPedidos() {
     .join("");
 }
 
+async function carregarHistoricoPedidos() {
+  try {
+    const resposta = await fetch(`${API_URL}/pedidos`);
+    if (!resposta.ok) throw new Error(`Gateway respondeu ${resposta.status}`);
+
+    const dados = await resposta.json();
+    for (const pedidoSalvo of dados.pedidos || []) {
+      if (pedidos.has(pedidoSalvo.id)) continue;
+
+      const pedido = {
+        id: pedidoSalvo.id,
+        itens: pedidoSalvo.produtos,
+        estoque: pedidoSalvo.estoque,
+        pagamento: pedidoSalvo.pagamento,
+        envio: pedidoSalvo.envio,
+        urlPagamento: pedidoSalvo.url_pagamento,
+        abaCheckout: null,
+        conexao: null,
+      };
+      pedidos.set(pedido.id, pedido);
+    }
+
+    for (const pedido of pedidos.values()) {
+      if (!pedido.conexao && !pedidoTerminou(pedido)) acompanharPedido(pedido.id);
+    }
+    renderizarPedidos();
+  } catch (erro) {
+    console.error("Não foi possível carregar o histórico de pedidos:", erro);
+  }
+}
+
 // Abre o Mock de Pagamento numa nova aba.
 $("lista-pedidos").addEventListener("click", (evento) => {
   const botaoRefazer = evento.target.closest("[data-refazer-pedido]");
@@ -374,5 +405,6 @@ $("botao-cancelar").addEventListener("click", () => enviarInteresse("DELETE"));
 
 // ---------------------------------------------------------------- Início
 carregarProdutos();
+carregarHistoricoPedidos();
 renderizarCarrinho();
 renderizarPedidos();

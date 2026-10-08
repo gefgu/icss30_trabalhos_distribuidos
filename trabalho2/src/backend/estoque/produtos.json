@@ -3,13 +3,13 @@
         "id": 1,
         "nome": "Produto A",
         "categoria": "A",
-        "estoque": 5
+        "estoque": 4
     },
     {
         "id": 2,
         "nome": "Produto B",
         "categoria": "B",
-        "estoque": 3
+        "estoque": 2
     },
     {
         "id": 3,
@@ -21,6 +21,6 @@
         "id": 4,
         "nome": "Produto A1",
         "categoria": "A",
-        "estoque": 8
+        "estoque": 7
     }
 ]

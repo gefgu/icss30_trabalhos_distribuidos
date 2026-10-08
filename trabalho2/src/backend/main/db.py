@@ -71,3 +71,24 @@ def buscar_pedido(id_pedido):
                 "envio": row[4],
             }
         return None
+
+
+def listar_pedidos():
+    with conectar() as con:
+        cursor = con.execute(
+            """
+            SELECT id, produtos, estoque, pagamento, envio
+            FROM pedidos
+            ORDER BY id
+            """
+        )
+        return [
+            {
+                "id": row[0],
+                "produtos": json.loads(row[1]),
+                "estoque": row[2],
+                "pagamento": row[3],
+                "envio": row[4],
+            }
+            for row in cursor.fetchall()
+        ]

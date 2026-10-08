@@ -26,7 +26,7 @@ Na raiz do repositório:
 
 ```bash
 uv venv
-uv pip install -r requirements.txt
+uv pip install --python .venv/bin/python -r requirements.txt
 ```
 
 ## Execução
@@ -37,7 +37,7 @@ Inicie o RabbitMQ antes dos serviços. Para subir os processos em janelas separa
 ./start_services_tmux.sh
 ```
 
-O script cria janelas para Gateway, Estoque, Pagamento, Entrega, Promoções, Mock de Pagamento e frontend, e anexa à sessão `ecommerce`. Use `Ctrl-b` seguido de `n`/`p` para navegar entre janelas e `Ctrl-b d` para desanexar. Para escolher outro nome de sessão, passe-o como argumento, por exemplo `./start_services_tmux.sh minha-loja`.
+O script cria uma única janela com painéis para Gateway, Estoque, Pagamento, Entrega, Promoções, Mock de Pagamento e frontend, e anexa à sessão `ecommerce`. Se algum processo encerrar, o painel permanece aberto para mostrar o erro. Use `Ctrl-b` seguido das setas para navegar entre painéis, `Ctrl-b z` para ampliar/recolher o painel atual e `Ctrl-b d` para desanexar. Para escolher outro nome de sessão, passe-o como argumento, por exemplo `./start_services_tmux.sh minha-loja`.
 
 Para iniciar os processos manualmente, mantenha um terminal aberto para cada comando abaixo. Execute os comandos a partir da raiz do repositório.
 
@@ -98,6 +98,7 @@ Abra <http://127.0.0.1:8080>. O JavaScript do frontend está configurado para ac
 |---|---|---|
 | `GET` | `/produtos` | Consulta produtos disponíveis no serviço de Estoque |
 | `POST` | `/pedido` | Cria um pedido e publica `pedido.criado` |
+| `GET` | `/pedidos` | Lista o histórico de pedidos persistidos |
 | `GET` | `/pedidos/{id}/status` | Recebe atualizações do pedido por SSE |
 | `POST` | `/interesse` | Registra interesse em promoções |
 | `DELETE` | `/interesse` | Cancela interesse em promoções |

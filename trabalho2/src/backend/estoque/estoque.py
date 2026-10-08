@@ -24,6 +24,10 @@
 
 import ast
 import json
+import threading
+from pathlib import Path
+import uvicorn
+from fastapi import FastAPI
 import pika
 
 from helpers.helper import (
@@ -31,13 +35,29 @@ from helpers.helper import (
     init_ecommerce_exchange,
 )
 
-produtos = [
-    {"id": 1, "nome": "Produto A", "categoria": "A", "estoque": 5},
-    {"id": 2, "nome": "Produto B", "categoria": "B", "estoque": 3},
-    {"id": 3, "nome": "Produto C", "categoria": "C", "estoque": 0},
-    {"id": 4, "nome": "Produto A1", "categoria": "A", "estoque": 10},
-]
+app = FastAPI()
 
+ARQUIVO_PRODUTOS = Path(__file__).with_name("produtos.json")
+
+def _carregar_produtos():
+    with ARQUIVO_PRODUTOS.open("r", encoding="utf-8") as arquivo:
+        dados = json.load(arquivo)
+
+    if not isinstance(dados, list):
+        raise ValueError("produtos.json deve conter uma lista de produtos.")
+    return dados
+
+
+def _salvar_produtos():
+    arquivo_temporario = ARQUIVO_PRODUTOS.with_suffix(".json.tmp")
+    arquivo_temporario.write_text(
+        json.dumps(produtos, ensure_ascii=False, indent=4) + "\n",
+        encoding="utf-8",
+    )
+    arquivo_temporario.replace(ARQUIVO_PRODUTOS)
+
+
+produtos = _carregar_produtos()
 reservas = {}
 
 
@@ -135,6 +155,7 @@ def processar_pedido(pedido):
             produto["estoque"] -= item["quantidade"]
 
     reservas[pedido_id] = itens_para_reservar
+    _salvar_produtos()
     return {
         "id": pedido_id,
         "status": "estoque_ok",
@@ -150,6 +171,9 @@ def processar_exclusao(pedido_id):
         produto = next((p for p in produtos if p["id"] == item["id"]), None)
         if produto is not None:
             produto["estoque"] += item["quantidade"]
+
+    if itens_reservados:
+        _salvar_produtos()
 
     return {
         "id": id_pedido,
@@ -193,6 +217,15 @@ def receber_mensagem(ch, method, properties, body):
 
     ch.basic_ack(delivery_tag=method.delivery_tag)
 
+@app.get("/produtos")
+async def listar_produtos():
+    produtos_disponiveis = [
+        produto
+        for produto in produtos
+        if produto["estoque"] > 0
+    ]
+
+    return {"produtos": produtos_disponiveis}
 
 if __name__ == "__main__":
     connection = pika.BlockingConnection(pika.ConnectionParameters(host="localhost"))
@@ -214,6 +247,11 @@ if __name__ == "__main__":
         queue=queue_name,
         routing_key="pedido.excluido",
     )
+
+    threading.Thread(
+        target=lambda: uvicorn.run(app, host="127.0.0.1", port=8001),
+        daemon=True,
+    ).start()
 
     channel.basic_consume(
         queue=queue_name,

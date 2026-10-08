@@ -7,15 +7,6 @@
 // Endereço do API Gateway (FastAPI).
 const API_URL = "http://127.0.0.1:8000";
 
-// Usados só enquanto o GET /produtos do Gateway ainda não devolve
-// a lista real do MS Estoque.
-const PRODUTOS_EXEMPLO = [
-  { id: 1, nome: "Produto A", categoria: "A", estoque: 5 },
-  { id: 2, nome: "Produto B", categoria: "B", estoque: 3 },
-  { id: 3, nome: "Produto C", categoria: "C", estoque: 0 },
-  { id: 4, nome: "Produto A1", categoria: "A", estoque: 10 },
-];
-
 // ---------------------------------------------------------------- Estado
 let produtos = [];           // catálogo carregado
 const carrinho = new Map();  // id do produto -> quantidade
@@ -40,20 +31,25 @@ function mostrarMensagem(elemento, texto, tipo) {
 // 1. CATÁLOGO  (GET /produtos)
 // =============================================================
 async function carregarProdutos() {
+  const aviso = $("aviso-catalogo");
+  aviso.hidden = true;
+
   try {
     const resposta = await fetch(`${API_URL}/produtos`);
-    const dados = await resposta.json();
+    if (!resposta.ok) throw new Error(`Gateway respondeu ${resposta.status}`);
 
-    if (Array.isArray(dados.produtos)) {
-      produtos = dados.produtos;
-    } else {
-      // O Gateway respondeu, mas ainda não com uma lista.
-      produtos = PRODUTOS_EXEMPLO;
-      mostrarAvisoCatalogo("O Gateway ainda não devolve a lista do Estoque. Mostrando produtos de exemplo.");
+    const dados = await resposta.json();
+    if (!Array.isArray(dados.produtos)) {
+      throw new Error("Resposta do Gateway não contém uma lista de produtos.");
+    }
+
+    produtos = dados.produtos;
+    if (produtos.length === 0) {
+      mostrarAvisoCatalogo("Não há produtos disponíveis em estoque.");
     }
   } catch (erro) {
-    produtos = PRODUTOS_EXEMPLO;
-    mostrarAvisoCatalogo(`Não foi possível falar com o Gateway em ${API_URL}. Mostrando produtos de exemplo.`);
+    produtos = [];
+    mostrarAvisoCatalogo(`Não foi possível consultar os produtos: ${erro.message}`);
   }
   renderizarProdutos();
 }
@@ -135,6 +131,11 @@ $("botao-finalizar").addEventListener("click", finalizarPedido);
 async function finalizarPedido() {
   const mensagem = $("msg-carrinho");
   const botao = $("botao-finalizar");
+  const abaCheckout = window.open("about:blank", "_blank");
+  if (abaCheckout) {
+    abaCheckout.document.write("<title>Checkout</title><p>Aguardando confirmação do estoque e criação do pagamento...</p>");
+    abaCheckout.document.close();
+  }
 
   // Monta o corpo no formato que o Gateway espera (modelo Pedido).
   const itens = [...carrinho.entries()].map(([id, quantidade]) => {
@@ -160,6 +161,7 @@ async function finalizarPedido() {
       pagamento: "pendente",
       envio: "pendente",
       urlPagamento: null,
+      abaCheckout,
       conexao: null,
     });
     acompanharPedido(dados.id);
@@ -170,6 +172,7 @@ async function finalizarPedido() {
     renderizarPedidos();
     mostrarMensagem(mensagem, `Pedido #${dados.id} criado. Acompanhe abaixo.`, "ok");
   } catch (erro) {
+    if (abaCheckout && !abaCheckout.closed) abaCheckout.close();
     botao.disabled = false;
     mostrarMensagem(mensagem, `Não foi possível criar o pedido: ${erro.message}.`, "erro");
   }
@@ -200,10 +203,25 @@ function atualizarPedido(idPedido, atualizacao) {
   if (!pedido) return;
 
   // campo = "estoque" | "pagamento" | "envio"
-  pedido[atualizacao.campo] = atualizacao.status;
+  if (atualizacao.campo) pedido[atualizacao.campo] = atualizacao.status;
 
-  // Combinado com o MS Pagamento: a URL do Mock chega como "url".
-  if (atualizacao.url) pedido.urlPagamento = atualizacao.url;
+  if (atualizacao.url) {
+    pedido.urlPagamento = atualizacao.url;
+    if (pedido.abaCheckout && !pedido.abaCheckout.closed) {
+      pedido.abaCheckout.location.href = atualizacao.url;
+      pedido.abaCheckout = null;
+    }
+  }
+
+  if (
+    atualizacao.campo === "estoque" &&
+    atualizacao.status === "indisponível" &&
+    pedido.abaCheckout &&
+    !pedido.abaCheckout.closed
+  ) {
+    pedido.abaCheckout.close();
+    pedido.abaCheckout = null;
+  }
 
   // Quando o pedido termina (bem ou mal), fecha a conexão SSE.
   if (pedidoTerminou(pedido)) pedido.conexao.close();
@@ -264,6 +282,12 @@ function renderizarPedidos() {
       const botaoPagar = podePagar
         ? `<button class="botao principal pagar" data-pagar="${pedido.id}">Pagar pedido</button>`
         : "";
+      const botaoNovoPedido = pedido.envio === "enviado"
+        ? `<button class="botao secundario novo-pedido" data-novo-pedido>Fazer novo pedido</button>`
+        : "";
+      const botaoRefazerPedido = pedido.pagamento === "recusado" && !pedido.itensRestaurados
+        ? `<button class="botao secundario refazer-pedido" data-refazer-pedido="${pedido.id}">Refazer pedido</button>`
+        : "";
 
       return `
         <li class="pedido">
@@ -273,6 +297,8 @@ function renderizarPedidos() {
           </div>
           <ol class="trilha">${etapas}</ol>
           ${botaoPagar}
+          ${botaoNovoPedido}
+          ${botaoRefazerPedido}
         </li>`;
     })
     .join("");
@@ -280,6 +306,28 @@ function renderizarPedidos() {
 
 // Abre o Mock de Pagamento numa nova aba.
 $("lista-pedidos").addEventListener("click", (evento) => {
+  const botaoRefazer = evento.target.closest("[data-refazer-pedido]");
+  if (botaoRefazer) {
+    const pedido = pedidos.get(Number(botaoRefazer.dataset.refazerPedido));
+    if (!pedido || pedido.itensRestaurados) return;
+
+    pedido.itens.forEach((item) => {
+      carrinho.set(item.id, (carrinho.get(item.id) || 0) + item.quantidade);
+    });
+    pedido.itensRestaurados = true;
+    renderizarCarrinho();
+    renderizarProdutos();
+    renderizarPedidos();
+    mostrarMensagem($("msg-carrinho"), `Itens do pedido #${pedido.id} foram restaurados no carrinho.`, "ok");
+    return;
+  }
+
+  const botaoNovoPedido = evento.target.closest("[data-novo-pedido]");
+  if (botaoNovoPedido) {
+    window.location.reload();
+    return;
+  }
+
   const botao = evento.target.closest("[data-pagar]");
   if (!botao) return;
   const pedido = pedidos.get(Number(botao.dataset.pagar));

@@ -1,0 +1,26 @@
+[
+    {
+        "id": 1,
+        "nome": "Produto A",
+        "categoria": "A",
+        "estoque": 5
+    },
+    {
+        "id": 2,
+        "nome": "Produto B",
+        "categoria": "B",
+        "estoque": 3
+    },
+    {
+        "id": 3,
+        "nome": "Produto C",
+        "categoria": "C",
+        "estoque": 0
+    },
+    {
+        "id": 4,
+        "nome": "Produto A1",
+        "categoria": "A",
+        "estoque": 8
+    }
+]

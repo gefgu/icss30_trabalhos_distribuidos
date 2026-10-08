@@ -25,6 +25,12 @@ def processar_evento(ch, method, properties, body, callback=None):
         evento = ast.literal_eval(conteudo)  # Compatibilidade com mensagens antigas.
 
     id_pedido = evento.get("id") if isinstance(evento, dict) else evento
+    if method.routing_key == "pagamento.checkout_criado":
+        checkout_url = evento.get("url") if isinstance(evento, dict) else None
+        if callback and checkout_url:
+            callback(id_pedido, {"url": checkout_url})
+        return
+
     status = EVENTOS.get(method.routing_key)
     if status and db.buscar_pedido(id_pedido):
         campo, valor = status
@@ -47,6 +53,7 @@ def iniciar_consumo(callback=None):
     init_ecommerce_exchange(channel)
 
     filas = {
+        "pagamento_checkout_criado": "pagamento.checkout_criado",
         "pagamento_aprovado": "pagamento.aprovado",
         "pagamento_recusado": "pagamento.recusado",
         "pedidos_enviados": "pedido.enviado",

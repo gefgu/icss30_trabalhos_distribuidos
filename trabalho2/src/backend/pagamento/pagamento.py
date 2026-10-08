@@ -1,18 +1,11 @@
-# Consome pedido.estoque_ok.
-# • (0,1) Solicita a criação de uma cobrança ao Mock de Pagamento para
-# este gerar a URL de checkout, passando a sua URL de Webhook para
-# retorno.
-# • (0,1) Disponibiliza o endpoint HTTP para receber o Webhook do
-# Mock de Pagamento com o status APROVADO ou RECUSADO.
-# • Publica no RabbitMQ os
-# eventos pagamento.aprovado ou pagamento.recusado.
-
-
-import random
+import httpx
 import ast
 import json
 import pika
+import uvicorn
+import threading
 from pathlib import Path
+from fastapi import FastAPI
 
 from helpers.helper import (
     EXCHANGE_ECOMMERCE_NAME,
@@ -20,6 +13,7 @@ from helpers.helper import (
 )
 
 FILE_FOLDER_PATH = Path(__file__).resolve().parents[0]
+app = FastAPI()
 
 
 def _parse_mensagem(body):
@@ -41,46 +35,73 @@ def _parse_mensagem(body):
             return {"id": conteudo}
 
 
-def processar_pagamento(pedido):
-    dados = pedido if isinstance(pedido, dict) else _parse_mensagem(pedido)
-    pedido_id = dados.get("id") if isinstance(dados, dict) else dados
-
-    resultado = random.choice(["aprovado", "recusado"])
-    routing_key = (
-        "pagamento.aprovado" if resultado == "aprovado" else "pagamento.recusado"
-    )
-    return {"id": pedido_id, "status": resultado, "routing_key": routing_key}
-
-
 def receber_mensagem(ch, method, properties, body):
     pedido = _parse_mensagem(body)
-    routing_key = method.routing_key
 
-    if routing_key == "pedido.estoque_ok":
-
-        resultado = processar_pagamento(pedido)
-        pedido_id = resultado["id"]
-
-        # publish as plain string and put signature in header
-        payload = {"id": pedido_id}
-        body_out = str(payload)
-
-        if resultado["status"] == "aprovado":
+    if method.routing_key == "pedido.estoque_ok":
+        pagamento = processar_pagamento(pedido)
+        checkout_url = pagamento.get("checkout_url")
+        if checkout_url:
+            print(f"[PAGAMENTO] Checkout do pedido {pedido['id']}: {checkout_url}")
             ch.basic_publish(
                 exchange=EXCHANGE_ECOMMERCE_NAME,
-                routing_key="pagamento.aprovado",
-                body=body_out,
+                routing_key="pagamento.checkout_criado",
+                body=json.dumps({"id": pedido["id"], "url": checkout_url}),
             )
-            print(f"[PAGAMENTO] Pedido {pedido_id} -> {resultado['status']}")
-        else:
-            ch.basic_publish(
-                exchange=EXCHANGE_ECOMMERCE_NAME,
-                routing_key="pagamento.recusado",
-                body=body_out,
-            )
-            print(f"[PAGAMENTO] Pedido {pedido_id} -> {resultado['status']}")
 
-        ch.basic_ack(delivery_tag=method.delivery_tag)
+    ch.basic_ack(
+        delivery_tag=method.delivery_tag
+    )
+
+
+def processar_pagamento(pedido):
+    pedido_id = pedido["id"]
+
+    with httpx.Client() as client:
+
+        resposta = client.post(
+            "http://localhost:8003/app_pagamento",
+            params={
+                "pedido_id": pedido_id,
+                "webhook_url": "http://localhost:8002/webhook/pagamento"
+            }
+        )
+
+    resposta.raise_for_status()
+    return resposta.json()
+
+@app.post("/webhook/pagamento")
+async def receber_webhook(dados: dict):
+    pedido_id = dados["pedido_id"]
+    status = dados["status"]
+
+    publicar_evento(
+        pedido_id,
+        status
+    )
+
+    return {"recebido": True}
+
+
+def publicar_evento(pedido_id, status):
+    body = json.dumps({"id": pedido_id})
+
+    routing_key = (
+        "pagamento.aprovado"
+        if status == "APROVADO"
+        else "pagamento.recusado"
+    )
+
+    channel.basic_publish(
+        exchange=EXCHANGE_ECOMMERCE_NAME,
+        routing_key=routing_key,
+        body=body
+    )
+
+    print(
+        f"[PAGAMENTO] Publicado: "
+        f"{routing_key} - pedido {pedido_id}"
+    )
 
 
 if __name__ == "__main__":
@@ -96,6 +117,11 @@ if __name__ == "__main__":
         queue=queue_name,
         routing_key="pedido.estoque_ok",
     )
+
+    threading.Thread(
+            target=lambda: uvicorn.run(app, host="127.0.0.1", port=8002),
+            daemon=True,
+        ).start()
 
     channel.basic_consume(
         queue=queue_name,

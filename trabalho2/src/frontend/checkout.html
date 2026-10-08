@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+
+<html lang="pt-BR">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Checkout</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/frontend/style.css?v=checkout-layout-2">
+</head>
+
+<body>
+    <header class="topo checkout-topo">
+        <p class="checkout-marca">Loja Distribuída</p>
+        <h1>Checkout</h1>
+        <p>Confirme a decisão de pagamento para este pedido.</p>
+    </header>
+
+    <main class="checkout-layout">
+        <section class="checkout-painel" aria-labelledby="titulo-pedido">
+            <div class="checkout-resumo">
+                <div>
+                    <h2 id="titulo-pedido">Pedido</h2>
+                    <p class="checkout-id">#<span id="pedido-id"></span></p>
+                </div>
+                <div class="checkout-status-area">
+                    <span class="checkout-legenda">Status do pagamento</span>
+                    <span id="status" class="checkout-status pendente" role="status" aria-live="polite">PENDENTE</span>
+                </div>
+            </div>
+
+            <p id="checkout-mensagem" class="mensagem" role="status" aria-live="polite">
+                Escolha uma das opções para continuar.
+            </p>
+
+            <div class="checkout-acoes">
+                <button id="botao-aprovar" class="botao principal" type="button" onclick="aprovarPagamento()">
+                    Aprovar pagamento
+                </button>
+                <button id="botao-recusar" class="botao secundario checkout-recusar" type="button" onclick="recusarPagamento()">
+                    Recusar pagamento
+                </button>
+            </div>
+        </section>
+    </main>
+
+    <script src="/frontend/checkout.js"></script>
+</body>
+</html>

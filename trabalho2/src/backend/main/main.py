@@ -25,9 +25,9 @@ import os
 import sys
 import threading
 import pika
+import httpx
 
-from fastapi import FastAPI
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.sse import EventSourceResponse
@@ -70,8 +70,10 @@ class Interesse(BaseModel):
 
 inicializar_banco()
 
+ESTOQUE_API_URL = os.getenv("ESTOQUE_API_URL", "http://127.0.0.1:8001")
 loop = None
 listeners = {}
+checkout_urls = {}
 
 def publicar(routing_key, body):
     """
@@ -130,7 +132,16 @@ async def root():
 
 @app.get("/produtos")
 async def listar_produtos():
-    return {"produtos": "Lista de produtos disponíveis em estoque."}
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resposta = await client.get(f"{ESTOQUE_API_URL}/produtos")
+            resposta.raise_for_status()
+            return resposta.json()
+    except httpx.HTTPError as erro:
+        raise HTTPException(
+            status_code=503,
+            detail="Não foi possível consultar os produtos no serviço de estoque.",
+        ) from erro
 
 
 @app.post("/pedido")
@@ -177,6 +188,10 @@ async def obter_status_pedido(pedido_id: int):
                     if pedido[campo] != "pendente":
                         yield f"data: {json.dumps({'campo': campo, 'status': pedido[campo]})}\n\n"
 
+            checkout_url = checkout_urls.get(pedido_id)
+            if checkout_url:
+                yield f"data: {json.dumps({'url': checkout_url})}\n\n"
+
             while True:
                 status = await queue.get()
                 yield f"data: {json.dumps(status)}\n\n"
@@ -192,6 +207,10 @@ async def obter_status_pedido(pedido_id: int):
 
 def notify_sse(pedido_id, status):
     def send():
+        checkout_url = status.get("url")
+        if checkout_url:
+            checkout_urls[pedido_id] = checkout_url
+
         for queue in listeners.get(pedido_id, set()):
             queue.put_nowait(status)
 

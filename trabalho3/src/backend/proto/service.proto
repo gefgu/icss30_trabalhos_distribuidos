@@ -1,0 +1,72 @@
+syntax = "proto3";
+
+package replicacao;
+
+// =========================================
+// SERVIÇO DO CLIENTE
+// =========================================
+service ClienteService {
+  rpc Gravar (GravarRequest) returns (GravarResponse);
+  rpc Consultar (ConsultarRequest) returns (ConsultarResponse);
+}
+
+message GravarRequest {
+  string dado = 1; // O conteúdo que o cliente quer salvar
+}
+
+message GravarResponse {
+  bool sucesso = 1;
+  bool redirecionar = 2;   // Indica se o cliente falou com o nó errado
+  string lider_atual = 3;  // Informa quem é o líder se redirecionar == true
+}
+
+message ConsultarRequest {
+  // Parâmetros da busca do cliente
+}
+
+message ConsultarResponse {
+  string dados_comitados = 1; // Retorna apenas dados comitados (Leitura Eventual)
+}
+
+// Estrutura básica de um registro de log
+message Registro {
+  int32 termo = 1;
+  int32 indice = 2;
+  string dado = 3;
+}
+
+// =========================================
+// SERVIÇO DO CLUSTER (Nó P2P Nó)
+// =========================================
+service ClusterService {
+  // Executa a votação para eleição de líder
+  rpc RequestVote (VoteRequest) returns (VoteResponse);
+  
+  // Realiza o Pull de dados e funciona como Heartbeat
+  rpc Fetch (FetchRequest) returns (FetchResponse);
+}
+
+// Mensagens do Fetch baseado no modelo Pull
+message FetchRequest {
+  int32 ultimo_termo = 1;  // Informado no diagrama e texto
+  int32 ultimo_indice = 2; // Informado no diagrama e texto
+  int32 id_replica = 3;    // Para o líder identificar o remetente
+}
+
+message FetchResponse {
+  int32 commit_index = 1;  // Índice de commit recebido do líder
+  repeated Registro log = 2; // Novos dados (entradas de log)
+}
+
+// Mensagens de Votação
+message VoteRequest {
+  int32 termo_candidato = 1;
+  int32 id_candidato = 2;
+  int32 ultimo_indice_log = 3; // Necessário para validação de log
+  int32 ultimo_termo_log = 4;
+}
+
+message VoteResponse {
+  int32 termo_atual = 1;
+  bool voto_concedido = 2;
+}

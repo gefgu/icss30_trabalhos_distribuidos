@@ -2,33 +2,12 @@ syntax = "proto3";
 
 package replicacao;
 
-// =========================================
-// SERVIÇO DO CLIENTE
-// =========================================
-service ClienteService {
-  rpc Gravar (GravarRequest) returns (GravarResponse);
-  rpc Consultar (ConsultarRequest) returns (ConsultarResponse);
-}
+// Contrato gRPC do Trabalho 3.
+// Para regerar os arquivos service_pb2*.py, a partir da pasta src/:
+//   python -m grpc_tools.protoc -I . --python_out=. --pyi_out=. --grpc_python_out=. backend/proto/service.proto
 
-message GravarRequest {
-  string dado = 1; // O conteúdo que o cliente quer salvar
-}
-
-message GravarResponse {
-  bool sucesso = 1;
-  bool redirecionar = 2;   // Indica se o cliente falou com o nó errado
-  string lider_atual = 3;  // Informa quem é o líder se redirecionar == true
-}
-
-message ConsultarRequest {
-  // Parâmetros da busca do cliente
-}
-
-message ConsultarResponse {
-  string dados_comitados = 1; // Retorna apenas dados comitados (Leitura Eventual)
-}
-
-// Estrutura básica de um registro de log
+// Uma entrada do log: o dado gravado, o termo do líder que o gravou e a
+// posição (índice) dele no log. Índices começam em 1.
 message Registro {
   int32 termo = 1;
   int32 indice = 2;
@@ -36,37 +15,78 @@ message Registro {
 }
 
 // =========================================
-// SERVIÇO DO CLUSTER (Nó P2P Nó)
+// SERVIÇO DO CLIENTE (cliente -> qualquer nó)
+// =========================================
+service ClienteService {
+  rpc Gravar (GravarRequest) returns (GravarResponse);
+  rpc Consultar (ConsultarRequest) returns (ConsultarResponse);
+}
+
+message GravarRequest {
+  string dado = 1;
+  // Só para o Cenário B da apresentação: o líder grava no log local e
+  // "cai" logo em seguida, antes de replicar.
+  bool simular_crash = 2;
+}
+
+message GravarResponse {
+  bool sucesso = 1;
+  bool redirecionar = 2;  // true se o cliente falou com um nó que não é o líder
+  int32 lider_atual = 3;  // id do líder conhecido (0 = desconhecido)
+  string mensagem = 4;    // explicação legível do resultado
+  int32 indice = 5;       // índice do log em que o dado ficou (se sucesso)
+  int32 termo = 6;        // termo em que o dado foi gravado (se sucesso)
+}
+
+message ConsultarRequest {}
+
+message ConsultarResponse {
+  repeated Registro dados = 1; // SÓ dados comitados (leitura eventual)
+  int32 id_no = 2;
+  string papel = 3;
+  int32 termo = 4;
+  int32 commit_index = 5;
+  int32 tamanho_log = 6;       // inclui o que ainda não foi comitado
+  int32 lider_atual = 7;
+}
+
+// =========================================
+// SERVIÇO DO CLUSTER (nó <-> nó)
 // =========================================
 service ClusterService {
-  // Executa a votação para eleição de líder
+  // Eleição de líder (estilo Raft)
   rpc RequestVote (VoteRequest) returns (VoteResponse);
-  
-  // Realiza o Pull de dados e funciona como Heartbeat
+  // Replicação Pull (estilo KRaft): réplica -> líder, a cada 100 ms.
+  // Também serve de heartbeat e de confirmação de recebimento.
   rpc Fetch (FetchRequest) returns (FetchResponse);
 }
 
-// Mensagens do Fetch baseado no modelo Pull
-message FetchRequest {
-  int32 ultimo_termo = 1;  // Informado no diagrama e texto
-  int32 ultimo_indice = 2; // Informado no diagrama e texto
-  int32 id_replica = 3;    // Para o líder identificar o remetente
-}
-
-message FetchResponse {
-  int32 commit_index = 1;  // Índice de commit recebido do líder
-  repeated Registro log = 2; // Novos dados (entradas de log)
-}
-
-// Mensagens de Votação
 message VoteRequest {
   int32 termo_candidato = 1;
   int32 id_candidato = 2;
-  int32 ultimo_indice_log = 3; // Necessário para validação de log
+  int32 ultimo_indice_log = 3; // usados na validação de log do voto
   int32 ultimo_termo_log = 4;
 }
 
 message VoteResponse {
   int32 termo_atual = 1;
   bool voto_concedido = 2;
+}
+
+message FetchRequest {
+  int32 id_replica = 1;
+  int32 termo_atual = 2;   // termo da réplica (para a regra do termo maior)
+  int32 ultimo_indice = 3; // última posição do log da réplica
+  int32 ultimo_termo = 4;  // termo da entrada nessa posição
+  int32 intervalo_ms = 5;  // de quanto em quanto tempo esta réplica faz Fetch
+}
+
+message FetchResponse {
+  bool sucesso = 1;           // false = quem respondeu não é o líder
+  int32 termo = 2;            // termo de quem respondeu
+  int32 lider_atual = 3;      // dica de quem é o líder (0 = desconhecido)
+  int32 commit_index = 4;
+  repeated Registro entradas = 5; // entradas novas que a réplica ainda não tem
+  bool divergente = 6;        // o log da réplica não bate com o do líder
+  int32 truncar_para = 7;     // se divergente: apagar tudo depois desse índice
 }

@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-from trabalho3.src.backend.proto import service_pb2 as trabalho3_dot_src_dot_backend_dot_proto_dot_service__pb2
+from backend.proto import service_pb2 as backend_dot_proto_dot_service__pb2
 
 GRPC_GENERATED_VERSION = '1.85.1'
 GRPC_VERSION = grpc.__version__
@@ -18,7 +18,7 @@ except ImportError:
 if _version_not_supported:
     raise RuntimeError(
         f'The grpc package installed is at version {GRPC_VERSION},'
-        + ' but the generated code in trabalho3/src/backend/proto/service_pb2_grpc.py depends on'
+        + ' but the generated code in backend/proto/service_pb2_grpc.py depends on'
         + f' grpcio>={GRPC_GENERATED_VERSION}.'
         + f' Please upgrade your grpc module to grpcio>={GRPC_GENERATED_VERSION}'
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
@@ -27,7 +27,7 @@ if _version_not_supported:
 
 class ClienteServiceStub:
     """=========================================
-    SERVIÇO DO CLIENTE
+    SERVIÇO DO CLIENTE (cliente -> qualquer nó)
     =========================================
     """
 
@@ -39,19 +39,19 @@ class ClienteServiceStub:
         """
         self.Gravar = channel.unary_unary(
                 '/replicacao.ClienteService/Gravar',
-                request_serializer=trabalho3_dot_src_dot_backend_dot_proto_dot_service__pb2.GravarRequest.SerializeToString,
-                response_deserializer=trabalho3_dot_src_dot_backend_dot_proto_dot_service__pb2.GravarResponse.FromString,
+                request_serializer=backend_dot_proto_dot_service__pb2.GravarRequest.SerializeToString,
+                response_deserializer=backend_dot_proto_dot_service__pb2.GravarResponse.FromString,
                 _registered_method=True)
         self.Consultar = channel.unary_unary(
                 '/replicacao.ClienteService/Consultar',
-                request_serializer=trabalho3_dot_src_dot_backend_dot_proto_dot_service__pb2.ConsultarRequest.SerializeToString,
-                response_deserializer=trabalho3_dot_src_dot_backend_dot_proto_dot_service__pb2.ConsultarResponse.FromString,
+                request_serializer=backend_dot_proto_dot_service__pb2.ConsultarRequest.SerializeToString,
+                response_deserializer=backend_dot_proto_dot_service__pb2.ConsultarResponse.FromString,
                 _registered_method=True)
 
 
 class ClienteServiceServicer:
     """=========================================
-    SERVIÇO DO CLIENTE
+    SERVIÇO DO CLIENTE (cliente -> qualquer nó)
     =========================================
     """
 
@@ -72,13 +72,13 @@ def add_ClienteServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'Gravar': grpc.unary_unary_rpc_method_handler(
                     servicer.Gravar,
-                    request_deserializer=trabalho3_dot_src_dot_backend_dot_proto_dot_service__pb2.GravarRequest.FromString,
-                    response_serializer=trabalho3_dot_src_dot_backend_dot_proto_dot_service__pb2.GravarResponse.SerializeToString,
+                    request_deserializer=backend_dot_proto_dot_service__pb2.GravarRequest.FromString,
+                    response_serializer=backend_dot_proto_dot_service__pb2.GravarResponse.SerializeToString,
             ),
             'Consultar': grpc.unary_unary_rpc_method_handler(
                     servicer.Consultar,
-                    request_deserializer=trabalho3_dot_src_dot_backend_dot_proto_dot_service__pb2.ConsultarRequest.FromString,
-                    response_serializer=trabalho3_dot_src_dot_backend_dot_proto_dot_service__pb2.ConsultarResponse.SerializeToString,
+                    request_deserializer=backend_dot_proto_dot_service__pb2.ConsultarRequest.FromString,
+                    response_serializer=backend_dot_proto_dot_service__pb2.ConsultarResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -90,7 +90,7 @@ def add_ClienteServiceServicer_to_server(servicer, server):
  # This class is part of an EXPERIMENTAL API.
 class ClienteService:
     """=========================================
-    SERVIÇO DO CLIENTE
+    SERVIÇO DO CLIENTE (cliente -> qualquer nó)
     =========================================
     """
 
@@ -109,8 +109,8 @@ class ClienteService:
             request,
             target,
             '/replicacao.ClienteService/Gravar',
-            trabalho3_dot_src_dot_backend_dot_proto_dot_service__pb2.GravarRequest.SerializeToString,
-            trabalho3_dot_src_dot_backend_dot_proto_dot_service__pb2.GravarResponse.FromString,
+            backend_dot_proto_dot_service__pb2.GravarRequest.SerializeToString,
+            backend_dot_proto_dot_service__pb2.GravarResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -136,8 +136,8 @@ class ClienteService:
             request,
             target,
             '/replicacao.ClienteService/Consultar',
-            trabalho3_dot_src_dot_backend_dot_proto_dot_service__pb2.ConsultarRequest.SerializeToString,
-            trabalho3_dot_src_dot_backend_dot_proto_dot_service__pb2.ConsultarResponse.FromString,
+            backend_dot_proto_dot_service__pb2.ConsultarRequest.SerializeToString,
+            backend_dot_proto_dot_service__pb2.ConsultarResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -151,7 +151,7 @@ class ClienteService:
 
 class ClusterServiceStub:
     """=========================================
-    SERVIÇO DO CLUSTER (Nó P2P Nó)
+    SERVIÇO DO CLUSTER (nó <-> nó)
     =========================================
     """
 
@@ -163,31 +163,32 @@ class ClusterServiceStub:
         """
         self.RequestVote = channel.unary_unary(
                 '/replicacao.ClusterService/RequestVote',
-                request_serializer=trabalho3_dot_src_dot_backend_dot_proto_dot_service__pb2.VoteRequest.SerializeToString,
-                response_deserializer=trabalho3_dot_src_dot_backend_dot_proto_dot_service__pb2.VoteResponse.FromString,
+                request_serializer=backend_dot_proto_dot_service__pb2.VoteRequest.SerializeToString,
+                response_deserializer=backend_dot_proto_dot_service__pb2.VoteResponse.FromString,
                 _registered_method=True)
         self.Fetch = channel.unary_unary(
                 '/replicacao.ClusterService/Fetch',
-                request_serializer=trabalho3_dot_src_dot_backend_dot_proto_dot_service__pb2.FetchRequest.SerializeToString,
-                response_deserializer=trabalho3_dot_src_dot_backend_dot_proto_dot_service__pb2.FetchResponse.FromString,
+                request_serializer=backend_dot_proto_dot_service__pb2.FetchRequest.SerializeToString,
+                response_deserializer=backend_dot_proto_dot_service__pb2.FetchResponse.FromString,
                 _registered_method=True)
 
 
 class ClusterServiceServicer:
     """=========================================
-    SERVIÇO DO CLUSTER (Nó P2P Nó)
+    SERVIÇO DO CLUSTER (nó <-> nó)
     =========================================
     """
 
     def RequestVote(self, request, context):
-        """Executa a votação para eleição de líder
+        """Eleição de líder (estilo Raft)
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def Fetch(self, request, context):
-        """Realiza o Pull de dados e funciona como Heartbeat
+        """Replicação Pull (estilo KRaft): réplica -> líder, a cada 100 ms.
+        Também serve de heartbeat e de confirmação de recebimento.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -198,13 +199,13 @@ def add_ClusterServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'RequestVote': grpc.unary_unary_rpc_method_handler(
                     servicer.RequestVote,
-                    request_deserializer=trabalho3_dot_src_dot_backend_dot_proto_dot_service__pb2.VoteRequest.FromString,
-                    response_serializer=trabalho3_dot_src_dot_backend_dot_proto_dot_service__pb2.VoteResponse.SerializeToString,
+                    request_deserializer=backend_dot_proto_dot_service__pb2.VoteRequest.FromString,
+                    response_serializer=backend_dot_proto_dot_service__pb2.VoteResponse.SerializeToString,
             ),
             'Fetch': grpc.unary_unary_rpc_method_handler(
                     servicer.Fetch,
-                    request_deserializer=trabalho3_dot_src_dot_backend_dot_proto_dot_service__pb2.FetchRequest.FromString,
-                    response_serializer=trabalho3_dot_src_dot_backend_dot_proto_dot_service__pb2.FetchResponse.SerializeToString,
+                    request_deserializer=backend_dot_proto_dot_service__pb2.FetchRequest.FromString,
+                    response_serializer=backend_dot_proto_dot_service__pb2.FetchResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -216,7 +217,7 @@ def add_ClusterServiceServicer_to_server(servicer, server):
  # This class is part of an EXPERIMENTAL API.
 class ClusterService:
     """=========================================
-    SERVIÇO DO CLUSTER (Nó P2P Nó)
+    SERVIÇO DO CLUSTER (nó <-> nó)
     =========================================
     """
 
@@ -235,8 +236,8 @@ class ClusterService:
             request,
             target,
             '/replicacao.ClusterService/RequestVote',
-            trabalho3_dot_src_dot_backend_dot_proto_dot_service__pb2.VoteRequest.SerializeToString,
-            trabalho3_dot_src_dot_backend_dot_proto_dot_service__pb2.VoteResponse.FromString,
+            backend_dot_proto_dot_service__pb2.VoteRequest.SerializeToString,
+            backend_dot_proto_dot_service__pb2.VoteResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -262,8 +263,8 @@ class ClusterService:
             request,
             target,
             '/replicacao.ClusterService/Fetch',
-            trabalho3_dot_src_dot_backend_dot_proto_dot_service__pb2.FetchRequest.SerializeToString,
-            trabalho3_dot_src_dot_backend_dot_proto_dot_service__pb2.FetchResponse.FromString,
+            backend_dot_proto_dot_service__pb2.FetchRequest.SerializeToString,
+            backend_dot_proto_dot_service__pb2.FetchResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -2,7 +2,9 @@
 # Abre os 4 nós e o cliente numa janela do tmux, dividida em 5 painéis.
 #
 #   ./start_tmux.sh           -> os 4 nós normais
-#   ./start_tmux.sh lento     -> nó 4 com Fetch a cada 5 s (Cenário 5)
+#   ./start_tmux.sh lento     -> nó 4 com Fetch a cada 5 s (Cenário 5) e um
+#                                segundo painel "Cliente 2", para consultar
+#                                enquanto o 1º cliente espera
 #   ./start_tmux.sh limpo     -> apaga a pasta dados/ antes (começa do zero)
 #   ./start_tmux.sh limpo lento
 #
@@ -77,5 +79,12 @@ tmux send-keys -t "$SESSAO" "$ATIVAR && $PYTHON_ESCAPADO -m backend.cluster.clus
 tmux split-window -v -f -l 15 -t "$SESSAO"
 tmux select-pane -T "Cliente"
 tmux send-keys -t "$SESSAO" "$ATIVAR && sleep 3 && $PYTHON_ESCAPADO -m backend.cliente.cliente" C-m
+
+# Modo lento: segundo cliente ao lado do primeiro (Cenário 5, passo 5).
+if [ -n "$EXTRA_NO4" ]; then
+  tmux split-window -h -t "$SESSAO"
+  tmux select-pane -T "Cliente 2"
+  tmux send-keys -t "$SESSAO" "$ATIVAR && sleep 3 && $PYTHON_ESCAPADO -m backend.cliente.cliente" C-m
+fi
 
 tmux attach -t "$SESSAO"

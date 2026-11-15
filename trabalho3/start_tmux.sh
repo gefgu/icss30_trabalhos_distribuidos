@@ -11,8 +11,25 @@
 
 SESSAO="trabalho3"
 PASTA="$(cd "$(dirname "$0")" && pwd)"
-# "clear" apaga o comando comprido antes de o programa começar.
-ATIVAR="cd '$PASTA/src' && { [ -f '$PASTA/.venv/bin/activate' ] && source '$PASTA/.venv/bin/activate'; true; } && clear"
+# Escolhe o interpretador antes de abrir os painéis: o tmux pode usar outro PATH.
+if [ -x "$PASTA/.venv/bin/python" ]; then
+  PYTHON="$PASTA/.venv/bin/python"
+elif command -v python3 >/dev/null 2>&1; then
+  PYTHON="$(command -v python3)"
+elif command -v python >/dev/null 2>&1; then
+  PYTHON="$(command -v python)"
+else
+  echo "Python não encontrado. Instale Python 3 e as dependências do README." >&2
+  exit 1
+fi
+if ! "$PYTHON" -c 'import grpc, google.protobuf' >/dev/null 2>&1; then
+  echo "Dependências ausentes para $PYTHON. Instale-as conforme o README." >&2
+  exit 1
+fi
+# Escapa caminhos para o shell de cada painel, inclusive espaços e aspas.
+printf -v PASTA_ESCAPADA '%q' "$PASTA/src"
+printf -v PYTHON_ESCAPADO '%q' "$PYTHON"
+ATIVAR="cd $PASTA_ESCAPADA && clear"
 
 EXTRA_NO4=""
 for arg in "$@"; do
@@ -43,22 +60,22 @@ tmux set -t "$SESSAO" status-right " Ctrl+B seta: muda painel | Ctrl+B :kill-ses
 tmux set -t "$SESSAO" status-right-length 60
 tmux set -t "$SESSAO" allow-rename off
 tmux select-pane -T "Nó 1"
-tmux send-keys -t "$SESSAO" "$ATIVAR && python -m backend.cluster.cluster --id 1" C-m
+tmux send-keys -t "$SESSAO" "$ATIVAR && $PYTHON_ESCAPADO -m backend.cluster.cluster --id 1" C-m
 
 # Painéis 1 a 3: nós 2, 3 e 4
 tmux split-window -h -t "$SESSAO"
 tmux select-pane -T "Nó 2"
-tmux send-keys -t "$SESSAO" "$ATIVAR && python -m backend.cluster.cluster --id 2" C-m
+tmux send-keys -t "$SESSAO" "$ATIVAR && $PYTHON_ESCAPADO -m backend.cluster.cluster --id 2" C-m
 tmux split-window -v -t "$SESSAO:0.0"
 tmux select-pane -T "Nó 3"
-tmux send-keys -t "$SESSAO" "$ATIVAR && python -m backend.cluster.cluster --id 3" C-m
+tmux send-keys -t "$SESSAO" "$ATIVAR && $PYTHON_ESCAPADO -m backend.cluster.cluster --id 3" C-m
 tmux split-window -v -t "$SESSAO:0.2"
 tmux select-pane -T "Nó 4${EXTRA_NO4:+ (lento)}"
-tmux send-keys -t "$SESSAO" "$ATIVAR && python -m backend.cluster.cluster --id 4 $EXTRA_NO4" C-m
+tmux send-keys -t "$SESSAO" "$ATIVAR && $PYTHON_ESCAPADO -m backend.cluster.cluster --id 4 $EXTRA_NO4" C-m
 
 # Painel de baixo, largura inteira: cliente
 tmux split-window -v -f -l 15 -t "$SESSAO"
 tmux select-pane -T "Cliente"
-tmux send-keys -t "$SESSAO" "$ATIVAR && sleep 3 && python -m backend.cliente.cliente" C-m
+tmux send-keys -t "$SESSAO" "$ATIVAR && sleep 3 && $PYTHON_ESCAPADO -m backend.cliente.cliente" C-m
 
 tmux attach -t "$SESSAO"

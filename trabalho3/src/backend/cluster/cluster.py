@@ -19,19 +19,19 @@
 # =============================================================
 
 import argparse
-import json
 import logging
 import os
 import random
 import threading
 import time
 from concurrent import futures
-from pathlib import Path
 
 import grpc
 
 import backend.proto.service_pb2 as pb2
 import backend.proto.service_pb2_grpc as pb2_grpc
+from backend.cluster.persistencia import Persistencia
+from backend.cluster.colors import CINZA, COR_PAPEL, DESTAQUES, FIM, NEGRITO
 
 # ---------------------------------------------------------------- Configuração
 # id do nó -> endereço gRPC
@@ -41,16 +41,14 @@ NOS = {
     3: "localhost:50053",
     4: "localhost:50054",
 }
-QUORUM = len(NOS) // 2 + 1          # 4 nós -> 3 (maioria absoluta)
+QUORUM = len(NOS) // 2 + 1  # 4 nós -> 3 (maioria absoluta)
 
-INTERVALO_FETCH = 0.1               # réplica pede dados ao líder a cada 100 ms
-ELEICAO_MIN, ELEICAO_MAX = 1.5, 3.0 # election timeout aleatório (segundos)
-HEARTBEAT_TIMEOUT = 1.0             # líder: sem Fetch há 1 s = réplica inativa
-ESPERA_COMMIT = 15.0                # quanto o líder espera o quórum numa gravação
-TIMEOUT_RPC = 0.5                   # tempo máximo de cada chamada gRPC
+INTERVALO_FETCH = 0.1  # réplica pede dados ao líder a cada 100 ms
+ELEICAO_MIN, ELEICAO_MAX = 1.5, 3.0  # election timeout aleatório (segundos)
+HEARTBEAT_TIMEOUT = 1.0  # líder: sem Fetch há 1 s = réplica inativa
+ESPERA_COMMIT = 15.0  # quanto o líder espera o quórum numa gravação
+TIMEOUT_RPC = 0.5  # tempo máximo de cada chamada gRPC
 MAX_ENTRADAS_POR_FETCH = 50
-
-PASTA_DADOS = Path(__file__).resolve().parents[3] / "dados"
 
 LIDER, CANDIDATO, SEGUIDOR = "Lider", "Candidato", "Seguidor"
 
@@ -62,61 +60,6 @@ OPCOES_CANAL = [
 ]
 
 log = logging.getLogger("no")
-
-# Cores no terminal (códigos ANSI), só para facilitar a leitura.
-COR_PAPEL = {"Lider": "\033[1;32m", "Candidato": "\033[1;33m", "Seguidor": "\033[36m"}
-CINZA, NEGRITO, VERMELHO, FIM = "\033[90m", "\033[1m", "\033[1;31m", "\033[0m"
-DESTAQUES = {  # palavra no texto -> cor da linha inteira
-    "ELEITO LÍDER": "\033[1;32m", "CANDIDATO": "\033[1;33m", "TRUNCOU": VERMELHO,
-    "RECUSOU": VERMELHO, "INATIVA": VERMELHO, "SIMULANDO CRASH": VERMELHO,
-    "aplicou no banco": "\033[32m", "NÃO comitadas": "\033[33m",
-}
-
-
-# =============================================================
-# Persistência em disco
-# Três arquivos por nó, na pasta dados/no_<id>/:
-#   estado.json -> termo atual e voto concedido (voted_for)
-#   log.json    -> log de operações (termo, índice, dado)
-#   banco.json  -> banco final: só dados comitados + commit_index
-# =============================================================
-class Persistencia:
-    def __init__(self, id_no):
-        self.pasta = PASTA_DADOS / f"no_{id_no}"
-        self.pasta.mkdir(parents=True, exist_ok=True)
-
-    def _ler(self, nome, padrao):
-        arquivo = self.pasta / nome
-        if not arquivo.exists():
-            return padrao
-        with open(arquivo, encoding="utf-8") as f:
-            return json.load(f)
-
-    def _gravar(self, nome, conteudo):
-        # Escrita atômica: grava num .tmp e troca. Se o processo cair no meio,
-        # o arquivo antigo continua inteiro.
-        arquivo = self.pasta / nome
-        temporario = arquivo.with_suffix(".tmp")
-        with open(temporario, "w", encoding="utf-8") as f:
-            json.dump(conteudo, f, ensure_ascii=False, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        temporario.replace(arquivo)
-
-    def carregar(self):
-        estado = self._ler("estado.json", {"termo": 0, "voted_for": None})
-        entradas = self._ler("log.json", [])
-        banco = self._ler("banco.json", {"commit_index": 0, "dados": []})
-        return estado, entradas, banco
-
-    def salvar_estado(self, termo, voted_for):
-        self._gravar("estado.json", {"termo": termo, "voted_for": voted_for})
-
-    def salvar_log(self, entradas):
-        self._gravar("log.json", entradas)
-
-    def salvar_banco(self, commit_index, dados):
-        self._gravar("banco.json", {"commit_index": commit_index, "dados": dados})
 
 
 # =============================================================
@@ -133,27 +76,29 @@ class No:
         # Persistidos
         self.termo = estado["termo"]
         self.voted_for = estado["voted_for"]
-        self.log = entradas                      # lista de {"termo","indice","dado"}
+        self.log = entradas  # lista de {"termo","indice","dado"}
         self.commit_index = banco["commit_index"]
-        self.banco = banco["dados"]              # o que o cliente consegue ler
+        self.banco = banco["dados"]  # o que o cliente consegue ler
 
         # Só em memória (recomeça a cada execução)
-        self.papel = SEGUIDOR                    # todo nó nasce Seguidor
+        self.papel = SEGUIDOR  # todo nó nasce Seguidor
         self.lider_atual = None
-        self.ultimo_contato = time.monotonic()   # último Fetch bem-sucedido
+        self.ultimo_contato = time.monotonic()  # último Fetch bem-sucedido
         self.timeout_eleicao = self._sortear_timeout()
         # Usados só quando é líder:
-        self.indice_replica = {}                 # id -> último índice confirmado
-        self.ultimo_fetch = {}                   # id -> instante do último Fetch
-        self.timeout_replica = {}                # id -> Heartbeat Timeout dessa réplica
-        self.ativas = set()                      # réplicas vistas há < 1 s
+        self.indice_replica = {}  # id -> último índice confirmado
+        self.ultimo_fetch = {}  # id -> instante do último Fetch
+        self.timeout_replica = {}  # id -> Heartbeat Timeout dessa réplica
+        self.ativas = set()  # réplicas vistas há < 1 s
 
         self.trava = threading.RLock()
         self.commit_mudou = threading.Condition(self.trava)
 
         # Um "stub" (controle remoto gRPC) para cada outro nó
         self.pares = {
-            id_par: pb2_grpc.ClusterServiceStub(grpc.insecure_channel(end, options=OPCOES_CANAL))
+            id_par: pb2_grpc.ClusterServiceStub(
+                grpc.insecure_channel(end, options=OPCOES_CANAL)
+            )
             for id_par, end in NOS.items()
             if id_par != id_no
         }
@@ -193,7 +138,9 @@ class No:
             self.lider_atual = None
             self.disco.salvar_estado(self.termo, self.voted_for)
             if antigo != SEGUIDOR:
-                log.info(f"{self.tag()} viu termo maior ({termo_recebido}): {antigo} -> Seguidor")
+                log.info(
+                    f"{self.tag()} viu termo maior ({termo_recebido}): {antigo} -> Seguidor"
+                )
             self.commit_mudou.notify_all()  # acorda gravações que estavam esperando
             return True
         return False
@@ -215,9 +162,11 @@ class No:
         novo_commit = min(novo_commit, self.ultimo_indice())
         if novo_commit <= self.commit_index:
             return
-        for entrada in self.log[self.commit_index:novo_commit]:
+        for entrada in self.log[self.commit_index : novo_commit]:
             self.banco.append(entrada)
-            log.info(f"{self.tag()} aplicou no banco: índice {entrada['indice']} = {entrada['dado']!r}")
+            log.info(
+                f"{self.tag()} aplicou no banco: índice {entrada['indice']} = {entrada['dado']!r}"
+            )
         self.commit_index = novo_commit
         self.disco.salvar_banco(self.commit_index, self.banco)
         self.commit_mudou.notify_all()
@@ -229,12 +178,19 @@ class No:
         índice que pelo menos 3 nós já têm.
         Ex.: líder 7, réplicas 7, 5, 2 -> [7, 7, 5, 2] -> 3º maior = 5.
         """
-        indices = sorted([self.ultimo_indice(), *self.indice_replica.values()], reverse=True)
+        indices = sorted(
+            [self.ultimo_indice(), *self.indice_replica.values()], reverse=True
+        )
         candidato = indices[QUORUM - 1]
         # Regra do Raft: o líder só comita por contagem entradas do PRÓPRIO termo
         # (as antigas vão junto). Evita comitar algo que ainda pode ser apagado.
-        if candidato > self.commit_index and self.termo_no_indice(candidato) == self.termo:
-            log.info(f"{self.tag()} quórum confirmou até o índice {candidato} (índices {indices})")
+        if (
+            candidato > self.commit_index
+            and self.termo_no_indice(candidato) == self.termo
+        ):
+            log.info(
+                f"{self.tag()} quórum confirmou até o índice {candidato} (índices {indices})"
+            )
             self._aplicar_ate(candidato)
 
     # ---------------------------------------------------- monitor de réplicas
@@ -249,7 +205,9 @@ class No:
                 log.info(f"{self.tag()} réplica {id_par} voltou (ATIVA)")
             elif not ativa and id_par in self.ativas:
                 self.ativas.discard(id_par)
-                log.info(f"{self.tag()} réplica {id_par} INATIVA (sem Fetch há {agora - instante:.1f}s)")
+                log.info(
+                    f"{self.tag()} réplica {id_par} INATIVA (sem Fetch há {agora - instante:.1f}s)"
+                )
 
     def nos_ativos(self):
         return 1 + len(self.ativas)  # o próprio líder + réplicas ativas
@@ -272,14 +230,20 @@ class No:
             concedido = req.termo_candidato == self.termo and pode_votar and log_ok
             if concedido:
                 self.voted_for = req.id_candidato
-                self.disco.salvar_estado(self.termo, self.voted_for)  # persiste ANTES de responder
+                self.disco.salvar_estado(
+                    self.termo, self.voted_for
+                )  # persiste ANTES de responder
                 self.ultimo_contato = time.monotonic()  # quem votou espera o resultado
                 log.info(f"{self.tag()} votou no nó {req.id_candidato}")
             else:
                 motivo = (
-                    "termo antigo" if req.termo_candidato < self.termo
-                    else f"já votou no nó {self.voted_for}" if not pode_votar
-                    else "log do candidato está desatualizado"
+                    "termo antigo"
+                    if req.termo_candidato < self.termo
+                    else (
+                        f"já votou no nó {self.voted_for}"
+                        if not pode_votar
+                        else "log do candidato está desatualizado"
+                    )
                 )
                 log.info(f"{self.tag()} NEGOU voto ao nó {req.id_candidato} ({motivo})")
             return pb2.VoteResponse(termo_atual=self.termo, voto_concedido=concedido)
@@ -297,7 +261,9 @@ class No:
             # Heartbeat: a réplica está viva.
             self.ultimo_fetch[req.id_replica] = time.monotonic()
             # Heartbeat Timeout individual: 1 s, ou 3x o intervalo de uma réplica lenta.
-            self.timeout_replica[req.id_replica] = max(HEARTBEAT_TIMEOUT, 3 * req.intervalo_ms / 1000)
+            self.timeout_replica[req.id_replica] = max(
+                HEARTBEAT_TIMEOUT, 3 * req.intervalo_ms / 1000
+            )
             if req.id_replica not in self.ativas:
                 self.ativas.add(req.id_replica)
                 log.info(f"{self.tag()} réplica {req.id_replica} voltou (ATIVA)")
@@ -316,17 +282,25 @@ class No:
                     f"{req.ultimo_indice} -> mandando truncar para {truncar}"
                 )
                 return pb2.FetchResponse(
-                    sucesso=True, termo=self.termo, lider_atual=self.id,
-                    commit_index=self.commit_index, divergente=True, truncar_para=truncar,
+                    sucesso=True,
+                    termo=self.termo,
+                    lider_atual=self.id,
+                    commit_index=self.commit_index,
+                    divergente=True,
+                    truncar_para=truncar,
                 )
 
             # O índice informado é a CONFIRMAÇÃO do que a réplica já tem.
             self.indice_replica[req.id_replica] = req.ultimo_indice
             self._avancar_commit_lider()
 
-            novas = self.log[req.ultimo_indice : req.ultimo_indice + MAX_ENTRADAS_POR_FETCH]
+            novas = self.log[
+                req.ultimo_indice : req.ultimo_indice + MAX_ENTRADAS_POR_FETCH
+            ]
             return pb2.FetchResponse(
-                sucesso=True, termo=self.termo, lider_atual=self.id,
+                sucesso=True,
+                termo=self.termo,
+                lider_atual=self.id,
                 commit_index=self.commit_index,
                 entradas=[pb2.Registro(**e) for e in novas],
             )
@@ -335,24 +309,35 @@ class No:
         with self.trava:
             if self.papel != LIDER:
                 return pb2.GravarResponse(
-                    sucesso=False, redirecionar=True, lider_atual=self.lider_atual or 0,
+                    sucesso=False,
+                    redirecionar=True,
+                    lider_atual=self.lider_atual or 0,
                     mensagem=f"Nó {self.id} é {self.papel}; procure o líder.",
                 )
 
             # Sem quórum, sem escrita: recusa na hora se sei que não vou conseguir.
             self._verificar_replicas()
             if self.nos_ativos() < QUORUM:
-                log.info(f"{self.tag()} RECUSOU escrita: só {self.nos_ativos()} nós ativos (quórum {QUORUM})")
+                log.info(
+                    f"{self.tag()} RECUSOU escrita: só {self.nos_ativos()} nós ativos (quórum {QUORUM})"
+                )
                 return pb2.GravarResponse(
-                    sucesso=False, lider_atual=self.id,
+                    sucesso=False,
+                    lider_atual=self.id,
                     mensagem=f"Sem quórum: {self.nos_ativos()} nós ativos, precisa de {QUORUM}.",
                 )
 
             # Grava no log local com o termo atual e o próximo índice.
-            entrada = {"termo": self.termo, "indice": self.ultimo_indice() + 1, "dado": req.dado}
+            entrada = {
+                "termo": self.termo,
+                "indice": self.ultimo_indice() + 1,
+                "dado": req.dado,
+            }
             self.log.append(entrada)
             self.disco.salvar_log(self.log)
-            log.info(f"{self.tag()} gravou no log local: índice {entrada['indice']} = {req.dado!r} (aguardando quórum)")
+            log.info(
+                f"{self.tag()} gravou no log local: índice {entrada['indice']} = {req.dado!r} (aguardando quórum)"
+            )
 
             if req.simular_crash:
                 log.info(f"{self.tag()} SIMULANDO CRASH antes de replicar!")
@@ -376,11 +361,15 @@ class No:
             )
             if comitado:
                 return pb2.GravarResponse(
-                    sucesso=True, lider_atual=self.id, indice=entrada["indice"], termo=termo_gravacao,
+                    sucesso=True,
+                    lider_atual=self.id,
+                    indice=entrada["indice"],
+                    termo=termo_gravacao,
                     mensagem=f"Comitado no índice {entrada['indice']} (termo {termo_gravacao}).",
                 )
             return pb2.GravarResponse(
-                sucesso=False, lider_atual=self.lider_atual or 0,
+                sucesso=False,
+                lider_atual=self.lider_atual or 0,
                 mensagem="Não foi possível confirmar no quórum a tempo; escrita não comitada.",
             )
 
@@ -390,8 +379,11 @@ class No:
             # log mas ainda não foi comitado fica invisível.
             return pb2.ConsultarResponse(
                 dados=[pb2.Registro(**e) for e in self.banco],
-                id_no=self.id, papel=self.papel, termo=self.termo,
-                commit_index=self.commit_index, tamanho_log=self.ultimo_indice(),
+                id_no=self.id,
+                papel=self.papel,
+                termo=self.termo,
+                commit_index=self.commit_index,
+                tamanho_log=self.ultimo_indice(),
                 lider_atual=self.lider_atual or 0,
             )
 
@@ -410,16 +402,18 @@ class No:
                     continue
                 # Timeout! Vira candidato.
                 self.papel = CANDIDATO
-                self.termo += 1                      # Termo = Termo + 1
-                self.voted_for = self.id             # vota em si mesmo
+                self.termo += 1  # Termo = Termo + 1
+                self.voted_for = self.id  # vota em si mesmo
                 self.lider_atual = None
                 self.disco.salvar_estado(self.termo, self.voted_for)
                 self.ultimo_contato = time.monotonic()
                 self.timeout_eleicao = self._sortear_timeout()
                 termo_eleicao = self.termo
                 pedido = pb2.VoteRequest(
-                    termo_candidato=self.termo, id_candidato=self.id,
-                    ultimo_indice_log=self.ultimo_indice(), ultimo_termo_log=self.ultimo_termo(),
+                    termo_candidato=self.termo,
+                    id_candidato=self.id,
+                    ultimo_indice_log=self.ultimo_indice(),
+                    ultimo_termo_log=self.ultimo_termo(),
                 )
                 log.info(f"{self.tag()} timeout sem líder -> CANDIDATO, pedindo votos")
 
@@ -438,16 +432,25 @@ class No:
             with self.trava:
                 if self._atualizar_termo_se_maior(resp.termo_atual):
                     return
-                if resp.voto_concedido and self.papel == CANDIDATO and self.termo == termo_eleicao:
+                if (
+                    resp.voto_concedido
+                    and self.papel == CANDIDATO
+                    and self.termo == termo_eleicao
+                ):
                     with trava_votos:
                         votos += 1
                         total = votos
-                    log.info(f"{self.tag()} recebeu voto do nó {id_par} ({total}/{QUORUM})")
+                    log.info(
+                        f"{self.tag()} recebeu voto do nó {id_par} ({total}/{QUORUM})"
+                    )
                     if total >= QUORUM:
                         self._virar_lider()
 
         # Pede os votos em paralelo
-        threads = [threading.Thread(target=pedir, args=(i, s), daemon=True) for i, s in self.pares.items()]
+        threads = [
+            threading.Thread(target=pedir, args=(i, s), daemon=True)
+            for i, s in self.pares.items()
+        ]
         for t in threads:
             t.start()
         for t in threads:
@@ -468,8 +471,10 @@ class No:
                     alvo = ids[proximo_palpite % len(ids)]
                     proximo_palpite += 1
                 pedido = pb2.FetchRequest(
-                    id_replica=self.id, termo_atual=self.termo,
-                    ultimo_indice=self.ultimo_indice(), ultimo_termo=self.ultimo_termo(),
+                    id_replica=self.id,
+                    termo_atual=self.termo,
+                    ultimo_indice=self.ultimo_indice(),
+                    ultimo_termo=self.ultimo_termo(),
                     intervalo_ms=int(self.intervalo_fetch * 1000),
                 )
 
@@ -489,7 +494,9 @@ class No:
         self._atualizar_termo_se_maior(resp.termo)
         if not resp.sucesso:
             # Não era o líder; seguir a dica, se houver.
-            self.lider_atual = resp.lider_atual if resp.lider_atual not in (0, self.id) else None
+            self.lider_atual = (
+                resp.lider_atual if resp.lider_atual not in (0, self.id) else None
+            )
             return
         if resp.termo < self.termo:
             return  # resposta de um líder antigo; ignora
@@ -511,7 +518,9 @@ class No:
                 self.log = self.log[:novo_tamanho]
                 self.disco.salvar_log(self.log)
                 for e in apagadas:
-                    log.info(f"{self.tag()} TRUNCOU entrada não comitada: índice {e['indice']} termo {e['termo']} {e['dado']!r}")
+                    log.info(
+                        f"{self.tag()} TRUNCOU entrada não comitada: índice {e['indice']} termo {e['termo']} {e['dado']!r}"
+                    )
             return
 
         if resp.entradas:
@@ -533,8 +542,18 @@ class No:
         while True:
             time.sleep(0.5)
             with self.trava:
-                atual = (self.papel, self.termo, self.commit_index, self.ultimo_indice(), self.lider_atual)
-                extra = f" | ativos {self.nos_ativos()}/{len(NOS)}" if self.papel == LIDER else ""
+                atual = (
+                    self.papel,
+                    self.termo,
+                    self.commit_index,
+                    self.ultimo_indice(),
+                    self.lider_atual,
+                )
+                extra = (
+                    f" | ativos {self.nos_ativos()}/{len(NOS)}"
+                    if self.papel == LIDER
+                    else ""
+                )
                 cor = COR_PAPEL.get(self.papel, "")
                 linha = (
                     f"{NEGRITO}== Nó {self.id}: {cor}{self.papel}{FIM}{NEGRITO} | termo {self.termo} "
@@ -601,10 +620,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Nó do cluster")
     parser.add_argument("--id", type=int, required=True, choices=sorted(NOS))
     parser.add_argument(
-        "--intervalo-fetch", type=int, default=int(INTERVALO_FETCH * 1000),
+        "--intervalo-fetch",
+        type=int,
+        default=int(INTERVALO_FETCH * 1000),
         help="ms entre Fetches (padrão 100). Use 5000 para demonstrar o Cenário 5.",
     )
     args = parser.parse_args()
+
     class Colorido(logging.Formatter):
         def format(self, registro):
             texto = super().format(registro)
